@@ -1,0 +1,18 @@
+Package: scJLIM
+Title: Single-Cell eQTL GWAS colocalization
+Version: 1.0.0
+Date: 2024-04-16
+Authors@R: c(person("Jonathan", "Mitchel", email="jonathan.mitchel3@gmail.com", role=c("cre","aut")))
+Maintainer: Jonathan Mitchel <jonathan.mitchel3@gmail.com>
+Description: 
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+Depends:
+    R (>= 4.0.0), Matrix
+biocViews:
+Imports:
+Suggests:
+RoxygenNote: 7.2.3
+LinkingTo: Rcpp, RcppArmadillo
+NeedsCompilation: no
