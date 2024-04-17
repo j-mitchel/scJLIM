@@ -497,21 +497,3 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
   return(jlim.res)
 }
 
-
-#' Function to run the permutation test Rcpp fn
-#' 
-#' @useDynLib scJLIM
-#' 
-#' @param assoc1 
-#' @param permmat 
-#' @param ld0 
-#' @param ld2 
-#' @param R2thr 
-#' @param lambda_t 
-#'
-#' @export
-perm_test_run <- function(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
-                             R2thr=.8, lambda_t=Inf) {
-  perm_test(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
-            R2thr=.8, lambda_t=Inf)
-}
