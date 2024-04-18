@@ -127,6 +127,34 @@ process.refPanels <- function(refgt.org) {
   return(list(ld0,refgt.mat))
 }
 
+calc.stat <- function (assoc1, assoc2, ld0, ld2, R2thr) {
+  
+  logP1 <- (abs(assoc1$Z) ** 2) / 2
+  logP2 <- (abs(assoc2$Z) ** 2) / 2
+  
+  ASSERT(sum(is.na(assoc1$Z)) == 0)
+  ASSERT(sum(is.na(assoc2$Z)) == 0)
+  
+  ### PEAK SELECTION (local)
+  maxI1 <- which.max(logP1)
+  relP1 <- exp(logP1 - max(logP1))
+  postP1 <- exp(logP1) / sum(exp(logP1))
+  local <- which(ld0[maxI1, ]**2 >= R2thr)
+  
+  gap <- 0
+  sumRelP1 <- sum(relP1[local])
+  
+  for (I in local) {
+    gap <- gap +
+      relP1[I] * (logP2[I] - max(logP2[ld2[I, ]**2 < R2thr]))
+  }
+  
+  gap <- gap / sumRelP1
+  gap
+  
+  return(gap)
+}
+
 #' @export
 perm.test <- function (assoc1, permmat, ld0, ld2,
                        R2thr, lambda.t, n.cores) {
@@ -251,12 +279,7 @@ find.panel <-function( refLD.dir, start.bp, end.bp, CHR ) {
   ref.LD.list0 <-
     list.files(refLD.dir,
                paste("[^.]+.*.txt.gz", sep=''))
-  
-  
-  if (length(ref.LD.list0) == 0) {
-    PL("No ref panel exist in the folder ", tr2subdir)
-    next
-  }
+
   ref.LD.list <- gsub("_", ".", ref.LD.list0)
   
   panels.List<-
@@ -315,7 +338,7 @@ calcMAF.refPanels <- function(refgt, refgt.all.sel) {
 # this only gets run once per full gene-cell type test (not per cell)
 # should be run before colocalization
 # should not depend on sec_tr because this changes for each cell in coloc test
-prep_jlim <- function(main_tr,ref.LD,sectr.sample.size,nperm,n.cores) {
+prep_jlim <- function(main_tr,ref.LD) {
   verbose <- FALSE
   start.bp <- min(main_tr$BP)
   end.bp <- max(main_tr$BP)
@@ -354,6 +377,19 @@ prep_jlim <- function(main_tr,ref.LD,sectr.sample.size,nperm,n.cores) {
   ld_cormat_refgt_num <- process.refPanels(refgt.org)
   ld_cormat <- ld_cormat_refgt_num[[1]] # previously called ld0.org
   refgt_num <- ld_cormat_refgt_num[[2]] # previously called refgt0.org
+
+  return(list(main_tr,assoc1,maf_vec,refgt.org,refgt_num,ld_cormat,indexSNP))
+}
+
+get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores) {
+  # unpack variables
+  main_tr <- jlim_vars[[1]]
+  assoc1 <- jlim_vars[[2]]
+  maf_vec <- jlim_vars[[3]]
+  refgt.org <- jlim_vars[[4]]
+  refgt_num <- jlim_vars[[5]]
+  ld_cormat <- jlim_vars[[6]]
+  indexSNP <- jlim_vars[[7]]
   
   ## get permutation matrix
   permmat <- get_permmat(refgt_num, sectr.sample.size, nperm, n.cores=n.cores)
@@ -361,23 +397,23 @@ prep_jlim <- function(main_tr,ref.LD,sectr.sample.size,nperm,n.cores) {
   # subset permutation matrix to same variants as in assoc1
   NULLDIST <- perm.test(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
                         R2thr=.8, lambda.t=Inf, n.cores=n.cores)
-
-  return(list(main_tr,assoc1,NULLDIST,permmat,maf_vec,refgt.org,refgt_num,ld_cormat,indexSNP,CHR,min.MAF))
+  
+  return(list(NULLDIST,permmat))
 }
 
-## main JLIM function - adapted from JLIM package
-# this is what needs to be run once per cell
-# jlim.test <- function(maintr, sectr, refgt=NULL, secld.file=NULL, permmat=NULL,
-#                        CHR, start.bp, end.bp, r2res=0.8, withPerm=FALSE,
-#                        perm.count, sectr.gene.filter=FALSE, geneName, indSNP,
-#                        maintr.col.names, sectr.col.names, resultFileName, sectr.sample.size,
-#                        min.SNPs.count, sectr.ref.db, min.MAF, min.pvalue,
-#                        mainld.file=NULL, mainld.ldmatrix=FALSE,rda.file=NULL,
-#                        rda.pvalue, recessive.model=FALSE, refgt.org, ld0.maf.org,
-#                        ld0.org, refgt0.org, NULLDIST){
-
-jlim.test <- function(assoc1, sectr, refgt.org, refgt_num, ld_cormat, maf_vec, 
-                      permmat, NULLDIST, min.SNPs.count, r2res=0.8, indexSNP){
+jlim.test <- function(jlim_vars, null_dist, sec_tr, min.SNPs.count, r2res=0.8){
+  
+  # unpack variables
+  main_tr <- jlim_vars[[1]]
+  assoc1 <- jlim_vars[[2]]
+  maf_vec <- jlim_vars[[3]]
+  refgt.org <- jlim_vars[[4]]
+  refgt_num <- jlim_vars[[5]]
+  ld_cormat <- jlim_vars[[6]]
+  indexSNP <- jlim_vars[[7]]
+  
+  NULLDIST <- null_dist[[1]]
+  permmat <- null_dist[[2]]
   
   results.allgene <- matrix(ncol=13, nrow=0)
   colnames(results.allgene) <- c("userIdxBP"," actualIdxBP","STAT", "pvalue",
@@ -386,7 +422,7 @@ jlim.test <- function(assoc1, sectr, refgt.org, refgt_num, ld_cormat, maf_vec,
                                  "executedPerm" ,"desc")
   
   # copy the matrix, replace rownames, append Z-scores from the p-values
-  assoc2 <- sectr
+  assoc2 <- sec_tr
   rownames(assoc2) <- 1:nrow(assoc2)
   assoc2 <- cbind(assoc2, Z=PtoZ(assoc2$P))
   assoc2 <- assoc2[!is.na(assoc2$P), ]
@@ -428,8 +464,7 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
   assoc2.sel <- assoc2$BP[assoc2$P <= 0.1]
 
   markers.t <- union(assoc1.sel, assoc2.sel)
-  PL("# Markers to run JLIM on:", length(markers.t))
-  
+
   ASSERT(length(markers.t) > 1)
   ASSERT(assoc1$BP[which.min(assoc1$P)] %in% markers.t)
   
@@ -497,3 +532,55 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
   return(jlim.res)
 }
 
+jlim_main <- function(snp_res_mat, jlim_vars, null_dist, min.SNPs.count=15, r2res=0.8, n.cores=20,
+                      adjust_method='n_eff_cauchy') {
+  main_tr <- jlim_vars[[1]]
+  per_cell_jlim <- plapply(1:ncol(snp_res_mat),function(cell_ndx) {
+    # select pvalues for all snps for a cell
+    snp_res_un <- snp_res_mat[,cell_ndx]
+    names(snp_res_un) <- rownames(snp_res_mat)
+    ## make sec_tr df
+    sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un[rownames(main_tr)])
+    colnames(sec_tr) <- c('CHR','BP','P')
+    
+    jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, min.SNPs.count=min.SNPs.count, r2res=r2res)
+    pval <- as.numeric(jlim_res[1,'pvalue'])
+    return(pval)
+  },progress = TRUE,n.cores = n.cores,mc.preschedule = TRUE)
+  
+  per_cell_jlim_un <- unlist(per_cell_jlim)
+  names(per_cell_jlim_un) <- colnames(snp_res_mat)
+  
+  ### to run cauchy combination test, can't have pvals exactly 0 or 1
+  # set pvals==0 to be equal to 1/number of permuatations
+  per_cell_jlim_un[per_cell_jlim_un==0] <- 1/nrow(null_dist[[2]])
+  
+  # set pvals==1 to be 1-(1/number of permuatations)
+  per_cell_jlim_un[per_cell_jlim_un==1] <- 1-(1/nrow(null_dist[[2]]))
+  
+  ## now compute p-value globally with cauchy combination test
+  global_p <- ACAT(per_cell_jlim_un)
+  
+  
+  
+  if (adjust_method=='n_eff_cauchy') {
+    # ## the following logic used to adjust individual cell pvals
+    # pval_adj <- pval_orig * effective_n  #for bonferroni correction
+    # pval_global <- min(pval_orig * effective_n)
+    # # this can be rewritten as the following since it works monotonically
+    # pval_global <- min(pval_orig) * effective_n
+    # # thus, we can compute the effective n with the global pval
+    # take min orig pval
+    min_orig_pval <- min(per_cell_jlim_un)
+    # now divide global pval by this to get effective_n
+    effective_n <- global_p / min_orig_pval
+    # now adjust all individual pvalues by this
+    pval_adj <- pmin(per_cell_jlim_un * effective_n,1)
+  } else if (adjust_method=='fdr') {
+    pval_adj <- p.adjust(per_cell_jlim_un,method='fdr')
+  } else if (adjust_method=='none') {
+    pval_adj <- per_cell_jlim_un
+  }
+  
+  return(list(global_p,pval_adj))
+}
