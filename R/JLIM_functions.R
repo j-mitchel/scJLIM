@@ -157,7 +157,7 @@ calc.stat <- function (assoc1, assoc2, ld0, ld2, R2thr) {
 
 #' @export
 perm.test <- function (assoc1, permmat, ld0, ld2,
-                       R2thr, lambda.t, n.cores) {
+                       r2res, lambda.t, n.cores) {
   
   thresholdingZ <- PtoZ(0.1)
   
@@ -189,7 +189,7 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
     ASSERT(markers.p[maxI1]) # always include maxI1
     
     # need multiple markers
-    local <- intersect(which(ld0[maxI1, ]**2 >= R2thr),
+    local <- intersect(which(ld0[maxI1, ]**2 >= r2res),
                        which(markers.p))
     
     logP2n <- (abs(assoc2n.Z) ** 2) / 2
@@ -199,7 +199,7 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
       sum(relP1[local] *
             sapply(local, function (I)
               (logP2n[I] -
-                 max(logP2n[(ld2[I, ]**2 < R2thr) & markers.p])),
+                 max(logP2n[(ld2[I, ]**2 < r2res) & markers.p])),
               simplify=TRUE))
     
     gap_norm <- gap / sum(relP1[local]) # statistic gets normalized
@@ -213,17 +213,26 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
 
 # refgt_num is the reference panel with ref/alt as 1s and 2s
 get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores) {
+  snpIds <- rownames(refgt_num)
+  refgt_num <- toGT(refgt_num)
+  refgt_num <- stdGT2(t(refgt_num))
+  refgt_num <- t(refgt_num)
+  rownames(refgt_num) <- snpIds
+  
   y <- matrix(rnorm(sectr.sample.size * nperm), ncol=sectr.sample.size, nrow=nperm) # represent gene expression values sampled from the null (random normal distribution)
   # permmat <- matrix(0, nrow=nperm, ncol=nrow(refgt_num))
   refgt_num <- t(refgt_num)
-  permmat_list <- plapply(1:nperm,function(IP) {
+  permmat_list <- plapply(1:nperm,function(IP) tryCatch({
     # sample sectr.sample.size individuals out of refgt_num
     sampledgt <- refgt_num[sample(1:nrow(refgt_num), sectr.sample.size, replace=TRUE),]
-    return(y[IP, , drop=FALSE] %*% sampledgt)
-  },progress = TRUE,n.cores = n.cores,mc.preschedule = TRUE)
+    
+    z_vec <- c(y[IP, , drop=FALSE] %*% sampledgt)
+    
+    return(z_vec)
+  },error=function(e) sampledgt),progress = TRUE,n.cores = n.cores,mc.preschedule = TRUE)
 
   permmat <- do.call(rbind,permmat_list)
-  permmat <- permmat / sqrt(sectr.sample.size) 
+  permmat <- permmat / sqrt(sectr.sample.size)
   
   # permmat has dimensions of nperm by snps, values are dot product of expression x genotype_snp_i
   # thus, if expression is correlated with genotype, we get a large value and vice vera
@@ -233,7 +242,7 @@ get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores) {
   # this is the variance of the product var_prod = var(rnorm,bin)
   # the sum of this product will have variance var_sum = n_samples*var_prod
   # thus, the sd of the sum of the product is sd_prod = sqrt(n_samples*var_prod)
-  # in this case var_prod is ~1, so sd_prod = sqrt(n_samples)
+  # in this case var_prod is ~1 because genotype and expression are both standardized, so sd_prod = sqrt(n_samples)
   # therefore, dividing the values in permmat by this, converts the values into z-scores
   return(permmat)
 }
@@ -243,7 +252,7 @@ PtoZ <- function(pv) {
   -qnorm(pv/2)
 }
 
-# alleles ref/Alt = 1/2  -> 0/1
+# creates genotypes from haplotypes by summing number of alternate alleles from two random haplotypes
 toGT <- function(gt) {
   M <- ncol(gt)/2
   gt.alt <- (gt != 1) + 0 # nonref
@@ -338,15 +347,22 @@ calcMAF.refPanels <- function(refgt, refgt.all.sel) {
 # this only gets run once per full gene-cell type test (not per cell)
 # should be run before colocalization
 # should not depend on sec_tr because this changes for each cell in coloc test
-prep_jlim <- function(main_tr,ref.LD) {
+prep_jlim <- function(main_tr,refLD.dir=NULL,refLD.mat=NULL,min.MAF=.05) {
+  if (is.null(refLD.dir) & is.null(refLD.mat)) {
+    stop('need to supply either refLD.dir or refLD.mat')
+  }
   verbose <- FALSE
   start.bp <- min(main_tr$BP)
   end.bp <- max(main_tr$BP)
   CHR <- main_tr$CHR[1]
-  min.MAF <- 0.05 # variants below this MAF are excluded
-  refld.file <- find.panel(ref.LD, start.bp=start.bp,
-                           end.bp=end.bp, CHR=CHR)
-  refgt <- read.delim(file=refld.file, header=FALSE, sep="\t", stringsAsFactors=FALSE) # matrix of variants x individuals from reference
+  
+  if (!is.null(refLD.dir)) {
+    refld.file <- find.panel(refLD.dir, start.bp=start.bp,
+                             end.bp=end.bp, CHR=CHR)
+    refgt <- read.delim(file=refld.file, header=FALSE, sep="\t", stringsAsFactors=FALSE) # matrix of variants x individuals from reference
+  } else {
+    refgt <- refLD.mat
+  }
 
   # process the refgt matrix, remove low MAF variants, and get out maf vector
   refLD.res <- loadRefLD(refgt, start.bp, end.bp, NULL,
@@ -381,7 +397,7 @@ prep_jlim <- function(main_tr,ref.LD) {
   return(list(main_tr,assoc1,maf_vec,refgt.org,refgt_num,ld_cormat,indexSNP))
 }
 
-get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores) {
+get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8) {
   # unpack variables
   main_tr <- jlim_vars[[1]]
   assoc1 <- jlim_vars[[2]]
@@ -396,12 +412,12 @@ get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores) {
   
   # subset permutation matrix to same variants as in assoc1
   NULLDIST <- perm.test(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
-                        R2thr=.8, lambda.t=Inf, n.cores=n.cores)
+                        r2res=r2res, lambda.t=Inf, n.cores=n.cores)
   
-  return(list(NULLDIST,permmat))
+  return(list(NULLDIST,permmat,r2res))
 }
 
-jlim.test <- function(jlim_vars, null_dist, sec_tr, min.SNPs.count, r2res=0.8){
+jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.count){
   
   # unpack variables
   main_tr <- jlim_vars[[1]]
@@ -414,6 +430,7 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, min.SNPs.count, r2res=0.8){
   
   NULLDIST <- null_dist[[1]]
   permmat <- null_dist[[2]]
+  r2res <- null_dist[[3]]
   
   results.allgene <- matrix(ncol=13, nrow=0)
   colnames(results.allgene) <- c("userIdxBP"," actualIdxBP","STAT", "pvalue",
@@ -424,9 +441,14 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, min.SNPs.count, r2res=0.8){
   # copy the matrix, replace rownames, append Z-scores from the p-values
   assoc2 <- sec_tr
   rownames(assoc2) <- 1:nrow(assoc2)
-  assoc2 <- cbind(assoc2, Z=PtoZ(assoc2$P))
-  assoc2 <- assoc2[!is.na(assoc2$P), ]
+  if (!('Z' %in% colnames(assoc2))) {
+    assoc2 <- cbind(assoc2, Z=PtoZ(assoc2$P))
+  }
   
+  if (!('P' %in% colnames(assoc2))) {
+    assoc2 <- cbind(assoc2, P=pnorm(abs(assoc2$Z), mean = 0, sd = 1, lower.tail = TRUE))
+  }
+
   if (!all(assoc1$BP==assoc2$BP)) {
     stop('SNPs in secondary trait are not the same or in the same order as the first trait')
   }
@@ -447,8 +469,8 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, min.SNPs.count, r2res=0.8){
   jlim.res@userIdxBP <- indexSNP
   permmat=jlim.res@permmat
   
-  cat("\nJLIM results:",colnames(results.allgene),"\n",sep = "   ")
-  cat("\n",getVec.jlim(jlim.res))
+  # cat("\nJLIM results:",colnames(results.allgene),"\n",sep = "   ")
+  # cat("\n",getVec.jlim(jlim.res))
   results.allgene <- rbind (results.allgene, getVec.jlim(jlim.res))
   
   return(results.allgene)
@@ -476,23 +498,8 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
   
   if (!is.null(ld0.maf)) {
     ld0.maf.t <- ld0.maf[assoc1$BP %in% markers.t]
-    
-    if (sum(is.na(ld0.maf.t)) > 0) {
-      cat(paste("\nNA in ref LD matrix:", refld.file))
-      stop()
-    }
-    
-    if (sum(ld0.maf.t == 0) > 0) {
-      cat(paste("\nMonomorphic SNPs in ref LD matrix:", refld.file, ": BP=",
-                paste(names(ld0.maf.t)[ld0.maf.t == 0], collapse=", ")),"\n")
-      stop()
-    }
   }
   
-  if (sum(is.na(ld1.t)) > 0) {
-    cat(paste("\nNA or monomorphic SNP in ref LD matrix:", refld.file),"\n")
-    stop()
-  }
   best1 <- which.max(abs(assoc1.t$Z))
   sectrIndSNPpvalue <- assoc2$P[assoc2$BP==indexSNP]
   sectrMinpvalue <- min(assoc2$P)
@@ -532,21 +539,27 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
   return(jlim.res)
 }
 
-jlim_main <- function(snp_res_mat, jlim_vars, null_dist, min.SNPs.count=15, r2res=0.8, n.cores=20,
-                      adjust_method='n_eff_cauchy') {
+jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size, 
+                      min.SNPs.count=15, n.cores=20, global_adjust_method='cauchy',
+                      adjust_method='n_eff_cauchy',cluster_pvals=FALSE,n_eff=NULL,progress=TRUE) {
   main_tr <- jlim_vars[[1]]
   per_cell_jlim <- plapply(1:ncol(snp_res_mat),function(cell_ndx) {
+  # per_cell_jlim <- plapply(which(colnames(snp_res_mat)%in%cells_coloc),function(cell_ndx) {
+  # per_cell_jlim <- lapply(1:ncol(snp_res_mat),function(cell_ndx) {
     # select pvalues for all snps for a cell
     snp_res_un <- snp_res_mat[,cell_ndx]
     names(snp_res_un) <- rownames(snp_res_mat)
     ## make sec_tr df
     sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un[rownames(main_tr)])
     colnames(sec_tr) <- c('CHR','BP','P')
+    # colnames(sec_tr) <- c('CHR','BP','Z')
     
-    jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, min.SNPs.count=min.SNPs.count, r2res=r2res)
+    
+    jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
+                          min.SNPs.count=min.SNPs.count)
     pval <- as.numeric(jlim_res[1,'pvalue'])
     return(pval)
-  },progress = TRUE,n.cores = n.cores,mc.preschedule = TRUE)
+  },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
   
   per_cell_jlim_un <- unlist(per_cell_jlim)
   names(per_cell_jlim_un) <- colnames(snp_res_mat)
@@ -554,15 +567,35 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, min.SNPs.count=15, r2re
   ### to run cauchy combination test, can't have pvals exactly 0 or 1
   # set pvals==0 to be equal to 1/number of permuatations
   per_cell_jlim_un[per_cell_jlim_un==0] <- 1/nrow(null_dist[[2]])
-  
+
   # set pvals==1 to be 1-(1/number of permuatations)
   per_cell_jlim_un[per_cell_jlim_un==1] <- 1-(1/nrow(null_dist[[2]]))
+
+  if (global_adjust_method %in% c('n_eff_bon','cauchy_omni','all_methods')) {
+    if (is.null(n_eff)) {
+      stop('need to set n_eff with this adjust method')
+    }
+  }
   
-  ## now compute p-value globally with cauchy combination test
-  global_p <- ACAT(per_cell_jlim_un)
-  
-  
-  
+  if (global_adjust_method=='cauchy') {
+    ## compute p-value globally with cauchy combination test
+    global_p <- ACAT(per_cell_jlim_un)
+  } else if (global_adjust_method=='n_eff_bon') {
+    global_p <- min(c(min(per_cell_jlim_un) * n_eff,1))
+  } else if (global_adjust_method=='cauchy_omni') {
+    global_p1 <- ACAT(per_cell_jlim_un)
+    global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
+    global_p <- ACAT(c(global_p1,global_p2))
+  } else if (global_adjust_method=='all_methods') {
+    global_p1 <- ACAT(per_cell_jlim_un)
+    global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
+    global_p <- ACAT(c(global_p1,global_p2))
+    global_p <- c(global_p1,global_p2,global_p)
+    names(global_p) <- c('cauchy','n_eff_bon','cauchy_omni')
+  } else {
+    stop('use one of the available global adjust methods')
+  }
+
   if (adjust_method=='n_eff_cauchy') {
     # ## the following logic used to adjust individual cell pvals
     # pval_adj <- pval_orig * effective_n  #for bonferroni correction
@@ -576,11 +609,25 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, min.SNPs.count=15, r2re
     effective_n <- global_p / min_orig_pval
     # now adjust all individual pvalues by this
     pval_adj <- pmin(per_cell_jlim_un * effective_n,1)
+  } else if (adjust_method=='n_eff_bon') {
+    if (!is.null(n_eff)) {
+      pval_adj <- pmin(per_cell_jlim_un * n_eff,1)
+    } else {
+      stop('need to provide n_eff with n_eff_pre correction method')
+    }
   } else if (adjust_method=='fdr') {
     pval_adj <- p.adjust(per_cell_jlim_un,method='fdr')
   } else if (adjust_method=='none') {
     pval_adj <- per_cell_jlim_un
+  } else {
+    stop('pick an available adjust_method')
+  }
+
+  if (cluster_pvals) {
+    clust_out <- kmeans(-log10(per_cell_jlim_un), 2, iter.max = 10, nstart = 1)
+    return(list(global_p,pval_adj,clust_out))
+  } else {
+    return(list(global_p,pval_adj))
   }
   
-  return(list(global_p,pval_adj))
 }
