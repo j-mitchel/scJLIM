@@ -554,6 +554,9 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     colnames(sec_tr) <- c('CHR','BP','P')
     # colnames(sec_tr) <- c('CHR','BP','Z')
     
+    # if (min(sec_tr$P)>.05) {
+    #   return(NA)
+    # }
     
     jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
                           min.SNPs.count=min.SNPs.count)
@@ -563,6 +566,12 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
   
   per_cell_jlim_un <- unlist(per_cell_jlim)
   names(per_cell_jlim_un) <- colnames(snp_res_mat)
+  
+  # # remove NA cells (ones that weren't tested because didn't have any significant eQTL)
+  # per_cell_jlim_un <- per_cell_jlim_un[!is.na(per_cell_jlim_un)]
+  # if (length(per_cell_jlim_un)==0) {
+  #   return(NA)
+  # }
   
   ### to run cauchy combination test, can't have pvals exactly 0 or 1
   # set pvals==0 to be equal to 1/number of permuatations
