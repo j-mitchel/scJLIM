@@ -237,12 +237,12 @@ get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores) {
   # permmat has dimensions of nperm by snps, values are dot product of expression x genotype_snp_i
   # thus, if expression is correlated with genotype, we get a large value and vice vera
   # however, since the expression values sampled from the null, we should get a null distribution of covariance values
-  # denominator is standard deviation of sum of product of an rnorm and a binary variable
+  # denominator is standard deviation of sum of product of two rnorms
   # for example:
-  # this is the variance of the product var_prod = var(rnorm,bin)
+  # The variance of the product, var_prod, of the two standardized variables is 1
   # the sum of this product will have variance var_sum = n_samples*var_prod
-  # thus, the sd of the sum of the product is sd_prod = sqrt(n_samples*var_prod)
-  # in this case var_prod is ~1 because genotype and expression are both standardized, so sd_prod = sqrt(n_samples)
+  # thus, the sd of the sum of the product is sd_sum_prod = sqrt(n_samples*var_prod)
+  # so, sd_sum_prod = sqrt(n_samples)
   # therefore, dividing the values in permmat by this, converts the values into z-scores
   return(permmat)
 }
