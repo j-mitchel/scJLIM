@@ -23,8 +23,38 @@ lme_helper <- function(data_in,geno_mat,snp_name,n_PCs) {
   
   full_model <- lmerTest::lmer(formula=f_mod_form, data=data_in)
   coef_mat <- summary(full_model)$coefficients[c('geno',paste0("geno:PC", 1:n_PCs)),c('Estimate','Std. Error','Pr(>|t|)')]
+  vcov_mat <- vcov(full_model)
+  return(list(coef_mat,vcov_mat))
+}
+
+pme_helper <- function(data_in,geno_mat,snp_name,n_PCs) {
   
-  return(coef_mat)
+  # need to add genotype of lead variant to a column
+  gt <- unlist(geno_mat[snp_name,])
+  data_in <- cbind.data.frame(data_in,gt[as.character(data_in[,'donors'])]) # needs to be character because indexing doesnt work if it's a factor
+  colnames(data_in)[ncol(data_in)] <- 'geno'
+  
+  if ('batch' %in% colnames(data_in)) {
+    base_eqn <- paste0('expr ~ geno + (1 | batch) + (1 | donors)')
+  } else {
+    base_eqn <- paste0('expr ~ geno + (1 | donors)')
+  }
+  
+  covars_vec <- colnames(data_in)
+  covars_vec <- covars_vec[!(covars_vec %in% c('expr','donors','batch','geno'))]
+  covar_eqn <- paste0(covars_vec, collapse = " + ")
+  pc_g_intr_eqn <- paste0("geno:PC", 1:n_PCs, collapse = " + ")
+  
+  # create formula with all variables
+  f_mod_vars <- paste(base_eqn,covar_eqn,pc_g_intr_eqn,sep = " + ")
+  f_mod_form <- as.formula(f_mod_vars)
+  
+  full_model <- lme4::glmer.nb(formula=f_mod_form, family = 'poisson', nAGQ = 0, data=data_in ,control = glmerControl(optimizer = "nloptwrap"))
+  
+  coef_mat <- summary(full_model)$coefficients[c('geno',paste0("geno:PC", 1:n_PCs)),c('Estimate','Std. Error','Pr(>|z|)')]
+  colnames(coef_mat)[3] <- 'Pr(>|t|)'
+  vcov_mat <- vcov(full_model)
+  return(list(coef_mat,vcov_mat))
 }
 
 get_per_cell_pv <- function(data_in,coef_mat,n_PCs,use_ivw=TRUE,ivw_type='orig_var') {
@@ -273,6 +303,49 @@ get_per_cell_pv <- function(data_in,coef_mat,n_PCs,use_ivw=TRUE,ivw_type='orig_v
 }
 
 
+get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat) {
+  intr_pc_names <- paste0("geno:PC", 1:n_PCs)
+  pc_names <- paste0("PC", 1:n_PCs)
+  
+  vcov_mat <- vcov_mat[c('geno',intr_pc_names),c('geno',intr_pc_names)]
+  vcov_mat[lower.tri(vcov_mat)] <- 0
+  diag(vcov_mat) <- 0
+  vcov_mat <- vcov_mat[,intr_pc_names] # remove geno column
+  
+  coefs <- coef_mat[intr_pc_names,'Estimate']
+  std_err <- coef_mat[intr_pc_names,'Std. Error']
+  
+  pcs_select <- as.matrix(data_in[,pc_names,drop=FALSE])
+  
+  expanded_coefs <- pcs_select %*% diag(coefs)
+  expanded_errors <- pcs_select %*% diag(std_err) # sd gets multiplied by the constant
+  
+  # now computing the expanded variance with covariance terms using formula from case 3 of: https://mattgolder.com/wp-content/uploads/2015/05/standarderrors1.png
+  covar_list <- list()
+  for (myterm in c('geno',intr_pc_names)) {
+    term_covars <- vcov_mat[myterm,]
+    expanded_term_covars <- pcs_select %*% diag(term_covars)
+    if (myterm=='geno') {
+      expanded_term_covars <- 2 * expanded_term_covars
+    } else {
+      expanded_term_covars <- 2 * expanded_term_covars * pcs_select[,strsplit(myterm,split=':')[[1]][[2]]]
+    }
+    covar_list[[myterm]] <- expanded_term_covars
+  }
+  
+  covar_list2 <- do.call(cbind,covar_list)
+  
+  total_effect <- rowSums(expanded_coefs) + coef_mat['geno','Estimate']
+  total_effect_error <- sqrt(rowSums(expanded_errors^2) + (coef_mat['geno','Std. Error']^2) + rowSums(covar_list2)) # variances added across terms
+
+  zsc <- total_effect / total_effect_error
+  
+  pval <- pnorm(abs(zsc), mean = 0, sd = 1, lower.tail = FALSE) * 2
+  
+  return(pval)
+}
+
+
 get_per_cell_pv_sig_only <- function(data_in,coef_mat,n_PCs,pc_ndx_keep) {
   intr_pc_names <- paste0("geno:PC", 1:n_PCs)
   pc_names <- paste0("PC", 1:n_PCs)
@@ -283,6 +356,7 @@ get_per_cell_pv_sig_only <- function(data_in,coef_mat,n_PCs,pc_ndx_keep) {
   if (length(pc_ndx_keep)==0) {
     zsc <- coef_mat['geno','Estimate'] / coef_mat['geno','Std. Error']
     pval <- pnorm(abs(zsc), mean = 0, sd = 1, lower.tail = FALSE) * 2
+    pval <- rep(pval,nrow(data_in))
   } else {
     if (length(pc_ndx_keep)==1) {
       coefs <- coef_mat[intr_pc_names,'Estimate',drop=FALSE]
@@ -301,6 +375,68 @@ get_per_cell_pv_sig_only <- function(data_in,coef_mat,n_PCs,pc_ndx_keep) {
     pval <- pnorm(abs(zsc), mean = 0, sd = 1, lower.tail = FALSE) * 2
   }
 
+  return(pval)
+}
+
+
+get_per_cell_pv_covar_sig_only <- function(data_in,coef_mat,n_PCs,vcov_mat,pc_ndx_keep) {
+  intr_pc_names <- paste0("geno:PC", 1:n_PCs)
+  pc_names <- paste0("PC", 1:n_PCs)
+  
+  intr_pc_names <- intr_pc_names[pc_ndx_keep]
+  pc_names <- pc_names[pc_ndx_keep]
+  
+  if (length(pc_ndx_keep)==0) {
+    zsc <- coef_mat['geno','Estimate'] / coef_mat['geno','Std. Error']
+    pval <- pnorm(abs(zsc), mean = 0, sd = 1, lower.tail = FALSE) * 2
+    pval <- rep(pval,nrow(data_in))
+    return(pval)
+  }
+    
+  vcov_mat <- vcov_mat[c('geno',intr_pc_names),c('geno',intr_pc_names)]
+  vcov_mat[lower.tri(vcov_mat)] <- 0
+  diag(vcov_mat) <- 0
+  vcov_mat <- vcov_mat[,intr_pc_names,drop=FALSE] # remove geno column
+  
+  if (length(pc_ndx_keep)==1) {
+    coefs <- coef_mat[intr_pc_names,'Estimate',drop=FALSE]
+    std_err <- coef_mat[intr_pc_names,'Std. Error',drop=FALSE]
+  } else {
+    coefs <- coef_mat[intr_pc_names,'Estimate']
+    std_err <- coef_mat[intr_pc_names,'Std. Error']
+  }
+  
+  pcs_select <- as.matrix(data_in[,pc_names,drop=FALSE])
+  
+  expanded_coefs <- pcs_select %*% diag(coefs)
+  expanded_errors <- pcs_select %*% diag(std_err) # sd gets multiplied by the constant
+  
+  # now computing the expanded variance with covariance terms using formula from case 3 of: https://mattgolder.com/wp-content/uploads/2015/05/standarderrors1.png
+  covar_list <- list()
+  for (myterm in c('geno',intr_pc_names)) {
+    term_covars <- vcov_mat[myterm,]
+    if (length(intr_pc_names)==1) {
+      expanded_term_covars <- pcs_select * term_covars
+    } else {
+      expanded_term_covars <- pcs_select %*% diag(term_covars)
+    }
+    if (myterm=='geno') {
+      expanded_term_covars <- 2 * expanded_term_covars
+    } else {
+      expanded_term_covars <- 2 * expanded_term_covars * pcs_select[,strsplit(myterm,split=':')[[1]][[2]]]
+    }
+    covar_list[[myterm]] <- expanded_term_covars
+  }
+  
+  covar_list2 <- do.call(cbind,covar_list)
+  
+  total_effect <- rowSums(expanded_coefs) + coef_mat['geno','Estimate']
+  total_effect_error <- sqrt(rowSums(expanded_errors^2) + (coef_mat['geno','Std. Error']^2) + rowSums(covar_list2)) # variances added across terms
+  
+  zsc <- total_effect / total_effect_error
+  
+  pval <- pnorm(abs(zsc), mean = 0, sd = 1, lower.tail = FALSE) * 2
+  
   return(pval)
 }
 
@@ -365,6 +501,12 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
   data <- cbind.data.frame(norm_counts[gene_test,],
                                 cell_pcs[cell_names,],
                                 cell_meta[cell_names,])
+  
+  # ## testing using counts with pme model
+  # data <- cbind.data.frame(pcell_counts[gene_test,],
+  #                          cell_pcs[cell_names,],
+  #                          cell_meta[cell_names,])
+  
   colnames(data)[1] <- 'expr'
   
   if (!is.null(geno_pcs)) {
@@ -377,17 +519,19 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
     data <- cbind.data.frame(data,geno_pcs[as.character(data[,'donors']),])
   }
   
-  ### scale expression to gaussian
-  # norm_expr <- normalize.quantiles.use.target(as.matrix(data$expr),rnorm(10000),copy=TRUE,subset=NULL)[,1]
-  # data$expr <- norm_expr
-  scaled_expr <- scale(data[,'expr',drop=FALSE])
-  data$expr <- c(scaled_expr)
+  # ### scale expression to gaussian
+  # scaled_expr <- scale(data[,'expr',drop=FALSE])
+  # data$expr <- c(scaled_expr)
   
   # run eQTL mapping for each SNP and get total effects and errors
   snp_res <- plapply(1:nrow(main_tr),function(snp_j) tryCatch({
     snp_name <- rownames(main_tr)[snp_j]
-    coef_mat <- lme_helper(data,geno_mat,snp_name,n_PCs)
-    per_cell_pvals <- get_per_cell_pv(data,coef_mat,n_PCs,use_ivw=use_ivw,ivw_type=ivw_type)
+    # lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
+    lme_out <- pme_helper(data,geno_mat,snp_name,n_PCs)
+    coef_mat <- lme_out[[1]]
+    vcov_mat <- lme_out[[2]]
+    # per_cell_pvals <- get_per_cell_pv(data,coef_mat,n_PCs,use_ivw=use_ivw,ivw_type=ivw_type)
+    per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
     return(per_cell_pvals)
   },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
   
@@ -399,7 +543,7 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
 
 
 
-get_eQTL_res_sig_any <- function(gene_test,norm_counts,cell_meta,cell_pcs,geno_mat,main_tr,
+get_eQTL_res_sig_any <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat,main_tr,
                          geno_pcs=NULL,n.cores=4,progress=TRUE) {
   # check everything is the right dimensions
   cell_names <- colnames(norm_counts)
@@ -444,35 +588,74 @@ get_eQTL_res_sig_any <- function(gene_test,norm_counts,cell_meta,cell_pcs,geno_m
     data <- cbind.data.frame(data,geno_pcs[as.character(data[,'donors']),])
   }
   
-  # ### scale expression
-  # norm_expr <- normalize.quantiles.use.target(as.matrix(data$expr),rnorm(10000),copy=TRUE,subset=NULL)[,1]
-  # data$expr <- norm_expr
-  scaled_expr <- scale(data[,'expr',drop=FALSE])
-  data$expr <- c(scaled_expr)
+  # # ### scale expression
+  # scaled_expr <- scale(data[,'expr',drop=FALSE])
+  # data$expr <- c(scaled_expr)
   
-  # testing using all PC:g terms significant for any snp
+  # # testing using all PC:g terms significant for any snp
+  # snp_res <- plapply(1:nrow(main_tr),function(snp_j) tryCatch({
+  #   snp_name <- rownames(main_tr)[snp_j]
+  #   lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
+  #   coef_mat <- lme_out[[1]]
+  #   return(coef_mat)
+  # },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+  
   snp_res <- plapply(1:nrow(main_tr),function(snp_j) tryCatch({
     snp_name <- rownames(main_tr)[snp_j]
-    coef_mat <- lme_helper(data,geno_mat,snp_name,n_PCs)
-    return(coef_mat)
-  },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = 20,mc.preschedule = TRUE)
+    # lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
+    lme_out <- pme_helper(data,geno_mat,snp_name,n_PCs)
+    # coef_mat <- lme_out[[1]]
+    # vcov_mat <- lme_out[[2]]
+    return(lme_out)
+  },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
   
-  max_sig_vals <- get_PC_max_sig(snp_res)
-  cormat_geno <- cor(t(geno_mat))
-  cormat_geno <- Matrix::nearPD(cormat_geno,corr = TRUE)
-  cormat_geno <- cormat_geno[["mat"]]
-  meff_out <- meff(cormat_geno,method='gao')
-  max_sig_vals <- pmin(1,max_sig_vals * meff_out)
+  # max_sig_vals <- get_PC_max_sig(snp_res)
+  # cormat_geno <- cor(t(geno_mat))
+  # # cormat_geno <- Matrix::nearPD(cormat_geno,corr = TRUE)
+  # # cormat_geno <- cormat_geno[["mat"]]
+  # # meff_out <- meff(cormat_geno,method='gao')
+  # meff_out <- meff(mvnconv(cormat_geno, target = "p", cov2cor = TRUE),method='gao')
+  # # meff_out <- meff(mvnconv(cormat_geno, target = "p", cov2cor = TRUE),method='galwey')
+  # 
+  # max_sig_vals <- pmin(1,max_sig_vals * meff_out)
+  # 
+  # # select pc terms to include in final model
+  # max_sig_vals_intr <- max_sig_vals[2:length(max_sig_vals)]
+  # pc_ndx_keep <- which(max_sig_vals_intr<.1)
+
+  ## testing using acat instead of meff
+  sig_vals <- get_PC_sig(snp_res)
+  pc_pv <- c()
+  for (i in 2:ncol(sig_vals)) {
+    per_sig <- sig_vals[,i]
+    per_sig_locus <- ACAT(per_sig)
+    pc_pv <- c(pc_pv,per_sig_locus)
+  }
+  pc_pv <- p.adjust(pc_pv,method='fdr')
+  pc_ndx_keep <- which(pc_pv<.05)
   
-  # select pc terms to include in final model
-  max_sig_vals_intr <- max_sig_vals[2:length(max_sig_vals)]
-  pc_ndx_keep <- which(max_sig_vals_intr<.1)
+  
+  # testing not running the test if persistent term isn't significant across the locus
+  sig_vals <- get_PC_sig(snp_res)
+  per_sig <- sig_vals[,1]
+  per_sig_locus <- ACAT(per_sig)
+  # if (per_sig_locus >.05) {
+  #   return(NA)
+  # }
+
+  # snp_res <- plapply(1:length(snp_res),function(i) tryCatch({
+  #   coef_mat <- snp_res[[i]]
+  #   per_cell_pvals <- get_per_cell_pv_sig_only(data,coef_mat,n_PCs,pc_ndx_keep)
+  #   return(per_cell_pvals)
+  # },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
   
   snp_res <- plapply(1:length(snp_res),function(i) tryCatch({
-    coef_mat <- snp_res[[i]]
-    per_cell_pvals <- get_per_cell_pv_sig_only(data,coef_mat,n_PCs,pc_ndx_keep)
+    coef_mat <- snp_res[[i]][[1]]
+    vcov_mat <- snp_res[[i]][[2]]
+    # per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
+    per_cell_pvals <- get_per_cell_pv_covar_sig_only(data,coef_mat,n_PCs,vcov_mat,pc_ndx_keep)
     return(per_cell_pvals)
-  },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = 20,mc.preschedule = TRUE)
+  },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
   
   snp_res_mat <- do.call(rbind.data.frame, snp_res)
   colnames(snp_res_mat) <- names(snp_res[[1]])
@@ -490,4 +673,18 @@ get_PC_max_sig <- function(snp_res) {
   df <- do.call("rbind.data.frame", sig_vals_all)
   min_pvals <- colMins(as.matrix(df),useNames = FALSE)
   return(min_pvals)
+}
+
+# get PC interaction term max significance
+get_PC_sig <- function(snp_res) {
+  snp_res <- lapply(snp_res,function(x){
+    return(x[[1]])
+  })
+  sig_vals_all <- list()
+  for (i in 1:length(snp_res)) {
+    sig_vals <- snp_res[[i]][,'Pr(>|t|)']
+    sig_vals_all[[i]] <- sig_vals
+  }
+  df <- do.call("rbind.data.frame", sig_vals_all)
+  return(df)
 }

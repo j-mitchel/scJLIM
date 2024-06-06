@@ -543,35 +543,45 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
                       min.SNPs.count=15, n.cores=20, global_adjust_method='cauchy',
                       adjust_method='n_eff_cauchy',cluster_pvals=FALSE,n_eff=NULL,progress=TRUE) {
   main_tr <- jlim_vars[[1]]
-  per_cell_jlim <- plapply(1:ncol(snp_res_mat),function(cell_ndx) {
-  # per_cell_jlim <- plapply(which(colnames(snp_res_mat)%in%cells_coloc),function(cell_ndx) {
-  # per_cell_jlim <- lapply(1:ncol(snp_res_mat),function(cell_ndx) {
-    # select pvalues for all snps for a cell
+  
+  # if pc interaction terms werent used, just run jlim once
+  if (all(snp_res_mat==snp_res_mat[,1])) {
+    cell_ndx <- 1
     snp_res_un <- snp_res_mat[,cell_ndx]
     names(snp_res_un) <- rownames(snp_res_mat)
-    ## make sec_tr df
     sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un[rownames(main_tr)])
     colnames(sec_tr) <- c('CHR','BP','P')
-    # colnames(sec_tr) <- c('CHR','BP','Z')
-    
-    # if (min(sec_tr$P)>.05) {
-    #   return(NA)
-    # }
-    
     jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
                           min.SNPs.count=min.SNPs.count)
     pval <- as.numeric(jlim_res[1,'pvalue'])
-    return(pval)
-  },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+    per_cell_jlim <- rep(pval,ncol(snp_res_mat))
+  } else {
+    per_cell_jlim <- plapply(1:ncol(snp_res_mat),function(cell_ndx) {
+      # select pvalues for all snps for a cell
+      snp_res_un <- snp_res_mat[,cell_ndx]
+      names(snp_res_un) <- rownames(snp_res_mat)
+      ## make sec_tr df
+      sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un[rownames(main_tr)])
+      colnames(sec_tr) <- c('CHR','BP','P')
+      eGene_sig <- ACAT(sec_tr$P)
+      # if (eGene_sig>.01) {
+      #   return(NA)
+      # } else {
+      #   jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
+      #                         min.SNPs.count=min.SNPs.count)
+      #   pval <- as.numeric(jlim_res[1,'pvalue'])
+      #   return(pval)
+      # }
+      jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
+                            min.SNPs.count=min.SNPs.count)
+      pval <- as.numeric(jlim_res[1,'pvalue'])
+      return(pval)
+    },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+  }
   
   per_cell_jlim_un <- unlist(per_cell_jlim)
   names(per_cell_jlim_un) <- colnames(snp_res_mat)
-  
-  # # remove NA cells (ones that weren't tested because didn't have any significant eQTL)
   # per_cell_jlim_un <- per_cell_jlim_un[!is.na(per_cell_jlim_un)]
-  # if (length(per_cell_jlim_un)==0) {
-  #   return(NA)
-  # }
   
   ### to run cauchy combination test, can't have pvals exactly 0 or 1
   # set pvals==0 to be equal to 1/number of permuatations
