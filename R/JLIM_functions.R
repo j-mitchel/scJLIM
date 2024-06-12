@@ -157,7 +157,7 @@ calc.stat <- function (assoc1, assoc2, ld0, ld2, R2thr) {
 
 #' @export
 perm.test <- function (assoc1, permmat, ld0, ld2,
-                       r2res, lambda.t, n.cores) {
+                       r2res, lambda.t, n.cores, progress=progress) {
   
   thresholdingZ <- PtoZ(0.1)
   
@@ -204,7 +204,7 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
     
     gap_norm <- gap / sum(relP1[local]) # statistic gets normalized
     return(gap_norm)
-  },progress = TRUE,n.cores = n.cores,mc.preschedule = TRUE)
+  },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
   
   NULLGAP <- unlist(NULLGAP)
   
@@ -397,7 +397,7 @@ prep_jlim <- function(main_tr,refLD.dir=NULL,refLD.mat=NULL,min.MAF=.05) {
   return(list(main_tr,assoc1,maf_vec,refgt.org,refgt_num,ld_cormat,indexSNP))
 }
 
-get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8) {
+get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8,progress=TRUE) {
   # unpack variables
   main_tr <- jlim_vars[[1]]
   assoc1 <- jlim_vars[[2]]
@@ -412,7 +412,7 @@ get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8) {
   
   # subset permutation matrix to same variants as in assoc1
   NULLDIST <- perm.test(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
-                        r2res=r2res, lambda.t=Inf, n.cores=n.cores)
+                        r2res=r2res, lambda.t=Inf, n.cores=n.cores, progress=progress)
   
   return(list(NULLDIST,permmat,r2res))
 }
