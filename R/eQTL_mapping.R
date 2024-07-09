@@ -359,63 +359,26 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
   })
   colnames(data)[col_to_fix] <- new_col_nm
   
-  # # run eQTL mapping for each SNP and get total effects and errors
-  # snp_res <- plapply(1:nrow(main_tr),function(snp_j) tryCatch({
-  # # snp_res <- lapply(1:nrow(main_tr),function(snp_j) {
-  #   snp_name <- rownames(main_tr)[snp_j]
-  #   lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
-  #   coef_mat <- lme_out[[1]]
-  #   vcov_mat <- lme_out[[2]]
-  #   # per_cell_pvals <- get_per_cell_pv(data,coef_mat,n_PCs,use_ivw=use_ivw,ivw_type=ivw_type)
-  #   per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
-  #   return(per_cell_pvals)
-  # # })
-  # },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
-  
-  # ####### testing only 
-  # plan(multicore, workers = 30)
-  # plan(multisession, workers = 10)
-  # snp_res <- future_lapply(1:50,function(snp_j) {
-  #   julia$library("MixedModels")
-  #   snp_name <- rownames(main_tr)[snp_j]
-  #   lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
-  #   return(lme_out)
-  # }, future.seed = 1)
-  # 
-  # snp_res <- plapply(1:50,function(snp_j) tryCatch({
-  #   # julia$library("MixedModels")
-  #   snp_name <- rownames(main_tr)[snp_j]
-  #   lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
-  #   return(lme_out)
-  # },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = 30,mc.preschedule = TRUE)
-  # ########
-  
-  snp_res <- plapply(1:nrow(main_tr),function(snp_j) tryCatch({
+  # using parLapply for parallel processes
+  cl <- makeCluster(n.cores)
+  clusterExport(cl, c("julia","lme_helper","get_per_cell_pv_covar","main_tr","data","geno_mat","n_PCs"), 
+                envir=environment())
+  clusterEvalQ(cl, c(library(JuliaCall),julia$library("MixedModels")))
+  snp_res <- parLapply(cl,X=1:nrow(main_tr),fun = function(snp_j) {
     snp_name <- rownames(main_tr)[snp_j]
     lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
-    return(lme_out)
-  },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
-  
-  ## testing using acat here
-  sig_vals <- get_PC_sig(snp_res)
-  pc_pv <- c()
-  for (i in 2:ncol(sig_vals)) {
-    per_sig <- sig_vals[,i]
-    per_sig_locus <- ACAT(per_sig)
-    pc_pv <- c(pc_pv,per_sig_locus)
-  }
-  
-  snp_res <- plapply(1:length(snp_res),function(i) tryCatch({
-    coef_mat <- snp_res[[i]][[1]]
-    vcov_mat <- snp_res[[i]][[2]]
+    coef_mat <- lme_out[[1]]
+    vcov_mat <- lme_out[[2]]
     per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
     return(per_cell_pvals)
-  },error=function(e) paste0('error_index_',snp_j)),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+  })
+  stopCluster(cl)
   
-  snp_res_mat <- do.call(rbind.data.frame, snp_res)
-  colnames(snp_res_mat) <- names(snp_res[[1]])
-  rownames(snp_res_mat) <- rownames(main_tr)
-  return(list(snp_res_mat,pc_pv))
+  snp_res_t <- data.table::transpose(snp_res)
+  names(snp_res_t) <- names(snp_res[[1]])
+  # snp names match rownames(main_tr)
+
+  return(snp_res_t)
 }
 
 
