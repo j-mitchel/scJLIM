@@ -178,6 +178,7 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
   ASSERT(ncol(permmat) == nrow(ld2))
   
   NULLGAP <- plapply(1:nrow(permmat),function(simNo) {
+  # NULLGAP <- lapply(1:nrow(permmat),function(simNo) {
     assoc2n.Z <- permmat[simNo, ]
     
     ASSERT(sum(is.na(assoc2n.Z)) == 0)
@@ -205,6 +206,7 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
     gap_norm <- gap / sum(relP1[local]) # statistic gets normalized
     return(gap_norm)
   },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+  # })
   
   NULLGAP <- unlist(NULLGAP)
   
@@ -212,7 +214,7 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
 }
 
 # refgt_num is the reference panel with ref/alt as 1s and 2s
-get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores) {
+get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores, progress) {
   snpIds <- rownames(refgt_num)
   refgt_num <- toGT(refgt_num)
   refgt_num <- stdGT2(t(refgt_num))
@@ -223,13 +225,15 @@ get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores) {
   # permmat <- matrix(0, nrow=nperm, ncol=nrow(refgt_num))
   refgt_num <- t(refgt_num)
   permmat_list <- plapply(1:nperm,function(IP) tryCatch({
+  # permmat_list <- lapply(1:nperm,function(IP) {
     # sample sectr.sample.size individuals out of refgt_num
     sampledgt <- refgt_num[sample(1:nrow(refgt_num), sectr.sample.size, replace=TRUE),]
     
     z_vec <- c(y[IP, , drop=FALSE] %*% sampledgt)
     
     return(z_vec)
-  },error=function(e) sampledgt),progress = TRUE,n.cores = n.cores,mc.preschedule = TRUE)
+  },error=function(e) sampledgt),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+  # })
 
   permmat <- do.call(rbind,permmat_list)
   permmat <- permmat / sqrt(sectr.sample.size)
@@ -408,7 +412,7 @@ get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8,pro
   indexSNP <- jlim_vars[[7]]
   
   ## get permutation matrix
-  permmat <- get_permmat(refgt_num, sectr.sample.size, nperm, n.cores=n.cores)
+  permmat <- get_permmat(refgt_num, sectr.sample.size, nperm, n.cores=n.cores, progress=progress)
   
   # subset permutation matrix to same variants as in assoc1
   NULLDIST <- perm.test(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
@@ -557,6 +561,7 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     per_cell_jlim <- rep(pval,ncol(snp_res_mat))
   } else {
     per_cell_jlim <- plapply(1:ncol(snp_res_mat),function(cell_ndx) {
+    # per_cell_jlim <- lapply(1:ncol(snp_res_mat),function(cell_ndx) {
       # select pvalues for all snps for a cell
       snp_res_un <- snp_res_mat[,cell_ndx]
       names(snp_res_un) <- rownames(snp_res_mat)
@@ -577,6 +582,7 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
       pval <- as.numeric(jlim_res[1,'pvalue'])
       return(pval)
     },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+    # })
   }
   
   per_cell_jlim_un <- unlist(per_cell_jlim)
