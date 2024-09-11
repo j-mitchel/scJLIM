@@ -177,8 +177,10 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
   ASSERT(ncol(permmat) == nrow(ld0))
   ASSERT(ncol(permmat) == nrow(ld2))
   
-  NULLGAP <- plapply(1:nrow(permmat),function(simNo) {
-  # NULLGAP <- lapply(1:nrow(permmat),function(simNo) {
+  cl <- makeCluster(n.cores)
+  clusterExport(cl, c("ASSERT","abs","max","sum","is.na","which","permmat","markers.p1","thresholdingZ","maxI1","ld0","r2res","relP1"), 
+                envir=environment())
+  NULLGAP <- parLapply(cl, X = 1:nrow(permmat), fun = function(simNo) {
     assoc2n.Z <- permmat[simNo, ]
     
     ASSERT(sum(is.na(assoc2n.Z)) == 0)
@@ -205,8 +207,8 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
     
     gap_norm <- gap / sum(relP1[local]) # statistic gets normalized
     return(gap_norm)
-  },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
-  # })
+  })
+  stopCluster(cl)
   
   NULLGAP <- unlist(NULLGAP)
   
@@ -224,17 +226,19 @@ get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores, progress) 
   y <- matrix(rnorm(sectr.sample.size * nperm), ncol=sectr.sample.size, nrow=nperm) # represent gene expression values sampled from the null (random normal distribution)
   # permmat <- matrix(0, nrow=nperm, ncol=nrow(refgt_num))
   refgt_num <- t(refgt_num)
-  permmat_list <- plapply(1:nperm,function(IP) tryCatch({
-  # permmat_list <- lapply(1:nperm,function(IP) {
-    # sample sectr.sample.size individuals out of refgt_num
+  
+  cl <- makeCluster(n.cores)
+  clusterExport(cl, c("refgt_num","sample","nrow","sectr.sample.size","y"), 
+                envir=environment())
+  permmat_list <- parLapply(cl, X=1:nperm, fun = function(IP) {
     sampledgt <- refgt_num[sample(1:nrow(refgt_num), sectr.sample.size, replace=TRUE),]
     
     z_vec <- c(y[IP, , drop=FALSE] %*% sampledgt)
     
     return(z_vec)
-  },error=function(e) sampledgt),progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
-  # })
-
+  })
+  stopCluster(cl)
+  
   permmat <- do.call(rbind,permmat_list)
   permmat <- permmat / sqrt(sectr.sample.size)
   
@@ -548,32 +552,81 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
                       adjust_method='n_eff_cauchy',cluster_pvals=FALSE,n_eff=NULL,progress=TRUE) {
   main_tr <- jlim_vars[[1]]
   
-  # if pc interaction terms werent used, just run jlim once
-  per_cell_jlim <- plapply(1:length(snp_res_mat),function(cell_ndx) {
+  cl <- makeCluster(n.cores)
+  clusterExport(cl, c("calc.stat","ASSERT","jlim.test","PtoZ","SNPselction","as.numeric","cbind.data.frame","ACAT","main_tr","jlim_vars","null_dist","sectr.sample.size","min.SNPs.count"), 
+                envir=environment())
+  clusterEvalQ(cl, c(library(ACAT)))
+  
+  per_cell_jlim <- parLapply(cl,snp_res_mat,function(snp_res_un) {
+    setClass("jlim",
+             slots = list(
+               userIdxBP="numeric",
+               actualIdxBP="numeric",
+               STAT="numeric",
+               pvalue="numeric",
+               usedSNPsNo="numeric",
+               startBP="numeric",
+               endBP="numeric",
+               sectrSampleSize="numeric",
+               sectrGeneName="character",
+               sectrIndSNPpvalue="numeric",
+               sectrMinpvalue="numeric",
+               sectrSNPWithMinpvalue="numeric",
+               desc="character",
+               executedPerm="numeric",
+               permmat="matrix"
+             ))
+    
+    #getVec.jlim <- function(object){}
+    setGeneric("getVec.jlim", function(object) standardGeneric("getVec.jlim"))
+    setMethod("getVec.jlim",
+              "jlim",
+              function(object) {
+                c(object@userIdxBP, object@actualIdxBP, object@STAT, object@pvalue,
+                  object@usedSNPsNo, object@startBP, object@endBP, object@sectrSampleSize,
+                  object@sectrGeneName, object@sectrIndSNPpvalue, object@sectrMinpvalue,
+                  object@executedPerm, object@desc)
+              })
+    
+    
     # select pvalues for all snps for a cell
-    snp_res_un <- snp_res_mat[[cell_ndx]]
     names(snp_res_un) <- rownames(main_tr)
     ## make sec_tr df
     sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un)
     colnames(sec_tr) <- c('CHR','BP','P')
-    eGene_sig <- ACAT(sec_tr$P)
+    # eGene_sig <- ACAT(sec_tr$P)
+    eGene_sig <- min(sec_tr$P)
+    # if (eGene_sig>.1) {
     if (eGene_sig>.01) {
-      return(NA)
+      c_test <- FALSE
     } else {
-      jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
-                            min.SNPs.count=min.SNPs.count)
-      pval <- as.numeric(jlim_res[1,'pvalue'])
-      return(pval)
+      c_test <- TRUE
     }
     jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
                           min.SNPs.count=min.SNPs.count)
     pval <- as.numeric(jlim_res[1,'pvalue'])
-    return(pval)
-  },progress = progress,n.cores = n.cores,mc.preschedule = TRUE)
+    return(list(c_test,pval))
+    # return(pval)
+  })
+  stopCluster(cl)
   
-  per_cell_jlim_un <- unlist(per_cell_jlim)
+  cells_test_ind <- sapply(per_cell_jlim,function(i){
+    return(i[[1]])
+  })
+  per_cell_jlim_un <- sapply(per_cell_jlim,function(i){
+    return(i[[2]])
+  })
+  
   names(per_cell_jlim_un) <- names(snp_res_mat)
   # per_cell_jlim_un <- per_cell_jlim_un[!is.na(per_cell_jlim_un)]
+
+  # if (length(per_cell_jlim_un)==0) {
+  #   return(NA)
+  # }
+  
+  if (sum(cells_test_ind)==0) {
+    return(NA)
+  }
   
   ### to run cauchy combination test, can't have pvals exactly 0 or 1
   # set pvals==0 to be equal to 1/number of permuatations
@@ -590,15 +643,15 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
   
   if (global_adjust_method=='cauchy') {
     ## compute p-value globally with cauchy combination test
-    global_p <- ACAT(per_cell_jlim_un)
+    global_p <- ACAT(per_cell_jlim_un[which(cells_test_ind)])
   } else if (global_adjust_method=='n_eff_bon') {
     global_p <- min(c(min(per_cell_jlim_un) * n_eff,1))
   } else if (global_adjust_method=='cauchy_omni') {
-    global_p1 <- ACAT(per_cell_jlim_un)
+    global_p1 <- ACAT(per_cell_jlim_un[which(cells_test_ind)])
     global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
     global_p <- ACAT(c(global_p1,global_p2))
   } else if (global_adjust_method=='all_methods') {
-    global_p1 <- ACAT(per_cell_jlim_un)
+    global_p1 <- ACAT(per_cell_jlim_un[which(cells_test_ind)])
     global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
     global_p <- ACAT(c(global_p1,global_p2))
     global_p <- c(global_p1,global_p2,global_p)
@@ -636,9 +689,8 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
 
   if (cluster_pvals) {
     clust_out <- kmeans(-log10(per_cell_jlim_un), 2, iter.max = 10, nstart = 1)
-    return(list(global_p,pval_adj,clust_out))
+    return(list(global_p,pval_adj,clust_out,which(cells_test_ind)))
   } else {
-    return(list(global_p,pval_adj))
+    return(list(global_p,pval_adj,which(cells_test_ind)))
   }
-  
 }

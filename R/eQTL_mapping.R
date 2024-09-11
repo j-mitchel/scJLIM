@@ -1,5 +1,5 @@
 
-lme_helper <- function(data_in,geno_mat,snp_name,n_PCs) {
+lme_helper <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
 
   # need to add genotype of lead variant to a column
   gt <- unlist(geno_mat[snp_name,])
@@ -20,7 +20,6 @@ lme_helper <- function(data_in,geno_mat,snp_name,n_PCs) {
   # create formula with all variables
   f_mod_vars <- paste(base_eqn,covar_eqn,pc_g_intr_eqn,sep = " + ")
   f_mod_form <- as.formula(f_mod_vars)
-  
   
   ## trying mixedmodels in julia to see if it's any faster
   julia$assign("lmm_data_in", data_in)
@@ -297,8 +296,9 @@ get_per_cell_pv_covar_sig_only <- function(data_in,coef_mat,n_PCs,vcov_mat,pc_nd
 #' @export
 #'
 #' @examples
-get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat,main_tr,
+get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat,main_tr,julia_dir,
                          geno_pcs=NULL,n.cores=4,use_ivw=TRUE,ivw_type='orig_var',progress=TRUE) {
+  
   # check everything is the right dimensions
   cell_names <- colnames(norm_counts)
   if (!all(cell_names %in% rownames(cell_pcs))) {
@@ -359,20 +359,46 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
   })
   colnames(data)[col_to_fix] <- new_col_nm
   
-  # using parLapply for parallel processes
-  cl <- makeCluster(n.cores)
-  clusterExport(cl, c("julia","lme_helper","get_per_cell_pv_covar","main_tr","data","geno_mat","n_PCs"), 
-                envir=environment())
-  clusterEvalQ(cl, c(library(JuliaCall),julia$library("MixedModels")))
-  snp_res <- parLapply(cl,X=1:nrow(main_tr),fun = function(snp_j) {
-    snp_name <- rownames(main_tr)[snp_j]
-    lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs)
-    coef_mat <- lme_out[[1]]
-    vcov_mat <- lme_out[[2]]
-    per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
-    return(per_cell_pvals)
-  })
-  stopCluster(cl)
+  if (n.cores > 1) {
+    # using parLapply for parallel processes
+    cl <- makeCluster(n.cores)
+    clusterExport(cl, c("julia","julia_dir","lme_helper","get_per_cell_pv_covar","main_tr","data","geno_mat","n_PCs"), 
+                  envir=environment())
+    # clusterEvalQ(cl, c(library(JuliaCall),julia$library("MixedModels")))
+    clusterEvalQ(cl,{
+      library(JuliaCall)
+      julia <- julia_setup(JULIA_HOME = julia_dir,
+                           rebuild = TRUE, force = TRUE)
+      julia$library("MixedModels")
+      julia$library("RCall")
+      NULL
+    })
+    
+    snp_res <- parLapply(cl,X=1:nrow(main_tr),fun = function(snp_j) {
+      snp_name <- rownames(main_tr)[snp_j]
+      lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs,julia)
+      coef_mat <- lme_out[[1]]
+      vcov_mat <- lme_out[[2]]
+      per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
+      return(per_cell_pvals)
+    })
+    stopCluster(cl)
+  } else {
+    julia <- julia_setup(JULIA_HOME = julia_dir,
+                         rebuild = TRUE, force = TRUE)
+    julia$library("MixedModels")
+    julia$library("RCall")
+    
+    # slightly faster to use lapply if only using one core per gene test
+    snp_res <- lapply(1:nrow(main_tr),FUN = function(snp_j) {
+      snp_name <- rownames(main_tr)[snp_j]
+      lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs,julia)
+      coef_mat <- lme_out[[1]]
+      vcov_mat <- lme_out[[2]]
+      per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
+      return(per_cell_pvals)
+    })
+  }
   
   snp_res_t <- data.table::transpose(snp_res)
   names(snp_res_t) <- names(snp_res[[1]])
