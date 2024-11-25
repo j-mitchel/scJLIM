@@ -370,6 +370,8 @@ prep_jlim <- function(main_tr,refLD.dir=NULL,refLD.mat=NULL,min.MAF=.05) {
     refgt <- read.delim(file=refld.file, header=FALSE, sep="\t", stringsAsFactors=FALSE) # matrix of variants x individuals from reference
   } else {
     refgt <- refLD.mat
+    refgt[,1] <- as.integer(refgt[,1])
+    refgt[,2] <- as.integer(refgt[,2])
   }
 
   # process the refgt matrix, remove low MAF variants, and get out maf vector
@@ -549,11 +551,15 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
 
 jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size, 
                       min.SNPs.count=15, n.cores=20, global_adjust_method='cauchy',
-                      adjust_method='n_eff_cauchy',cluster_pvals=FALSE,n_eff=NULL,progress=TRUE) {
+                      adjust_method='n_eff_cauchy',cluster_pvals=FALSE,n_eff=NULL,
+                      progress=TRUE,censor_cells=FALSE,censor_type='min_pval') {
   main_tr <- jlim_vars[[1]]
   
   cl <- makeCluster(n.cores)
-  clusterExport(cl, c("calc.stat","ASSERT","jlim.test","PtoZ","SNPselction","as.numeric","cbind.data.frame","ACAT","main_tr","jlim_vars","null_dist","sectr.sample.size","min.SNPs.count"), 
+  clusterExport(cl, c("calc.stat","ASSERT","jlim.test","PtoZ","SNPselction",
+                      "as.numeric","cbind.data.frame","ACAT","main_tr",
+                      "jlim_vars","null_dist","sectr.sample.size",
+                      "min.SNPs.count","censor_cells","censor_type"), 
                 envir=environment())
   clusterEvalQ(cl, c(library(ACAT)))
   
@@ -588,20 +594,34 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
                   object@executedPerm, object@desc)
               })
     
+    if (is.na(snp_res_un[1])) {
+      return(list(FALSE,1))
+    }
     
     # select pvalues for all snps for a cell
     names(snp_res_un) <- rownames(main_tr)
     ## make sec_tr df
     sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un)
     colnames(sec_tr) <- c('CHR','BP','P')
-    # eGene_sig <- ACAT(sec_tr$P)
-    eGene_sig <- min(sec_tr$P)
-    # if (eGene_sig>.1) {
-    if (eGene_sig>.01) {
-      c_test <- FALSE
+    
+    if (censor_type=='min_pval') {
+      eGene_sig <- min(sec_tr$P)
+      eGene_thresh <- .01
+    } else if (censor_type=='cauchy_pval') {
+      eGene_sig <- ACAT(sec_tr$P)
+      eGene_thresh <- .10
+    }
+    
+    if (censor_cells) {
+      if (eGene_sig>eGene_thresh) {
+        c_test <- FALSE
+      } else {
+        c_test <- TRUE
+      }
     } else {
       c_test <- TRUE
     }
+    
     jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
                           min.SNPs.count=min.SNPs.count)
     pval <- as.numeric(jlim_res[1,'pvalue'])
@@ -624,16 +644,21 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
   #   return(NA)
   # }
   
-  if (sum(cells_test_ind)==0) {
-    return(NA)
-  }
+  #### to run cauchy combination test, can't have pvals exactly 0 or 1
+  # # set pvals==0 to be equal to 1/number of permuatations
+  # per_cell_jlim_un[per_cell_jlim_un==0] <- 1/nrow(null_dist[[2]])
+  # # set pvals==1 to be 1-(1/number of permuatations)
+  # per_cell_jlim_un[per_cell_jlim_un==1] <- 1-(1/nrow(null_dist[[2]]))
   
-  ### to run cauchy combination test, can't have pvals exactly 0 or 1
-  # set pvals==0 to be equal to 1/number of permuatations
-  per_cell_jlim_un[per_cell_jlim_un==0] <- 1/nrow(null_dist[[2]])
-
-  # set pvals==1 to be 1-(1/number of permuatations)
-  per_cell_jlim_un[per_cell_jlim_un==1] <- 1-(1/nrow(null_dist[[2]]))
+  if (sum(cells_test_ind)==0) {
+    return(list(NA,per_cell_jlim_un))
+  }
+  cells_test_ind <- which(cells_test_ind) # logical to indices
+  
+  ## removing pvals exactly equal to 0 or 1
+  ndx_rm1 <- which(per_cell_jlim_un==0)
+  ndx_rm2 <- which(per_cell_jlim_un==1)
+  cells_test_ind <- cells_test_ind[!(cells_test_ind %in% c(ndx_rm1,ndx_rm2))]
 
   if (global_adjust_method %in% c('n_eff_bon','cauchy_omni','all_methods')) {
     if (is.null(n_eff)) {
@@ -643,15 +668,15 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
   
   if (global_adjust_method=='cauchy') {
     ## compute p-value globally with cauchy combination test
-    global_p <- ACAT(per_cell_jlim_un[which(cells_test_ind)])
+    global_p <- ACAT(per_cell_jlim_un[cells_test_ind])
   } else if (global_adjust_method=='n_eff_bon') {
     global_p <- min(c(min(per_cell_jlim_un) * n_eff,1))
   } else if (global_adjust_method=='cauchy_omni') {
-    global_p1 <- ACAT(per_cell_jlim_un[which(cells_test_ind)])
+    global_p1 <- ACAT(per_cell_jlim_un[cells_test_ind])
     global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
     global_p <- ACAT(c(global_p1,global_p2))
   } else if (global_adjust_method=='all_methods') {
-    global_p1 <- ACAT(per_cell_jlim_un[which(cells_test_ind)])
+    global_p1 <- ACAT(per_cell_jlim_un[cells_test_ind])
     global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
     global_p <- ACAT(c(global_p1,global_p2))
     global_p <- c(global_p1,global_p2,global_p)
@@ -689,8 +714,8 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
 
   if (cluster_pvals) {
     clust_out <- kmeans(-log10(per_cell_jlim_un), 2, iter.max = 10, nstart = 1)
-    return(list(global_p,pval_adj,clust_out,which(cells_test_ind)))
+    return(list(global_p,pval_adj,clust_out,cells_test_ind))
   } else {
-    return(list(global_p,pval_adj,which(cells_test_ind)))
+    return(list(global_p,pval_adj,cells_test_ind))
   }
 }

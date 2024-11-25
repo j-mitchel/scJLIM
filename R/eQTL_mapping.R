@@ -47,6 +47,36 @@ lme_helper <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
   return(list(coef_mat,vcov_mat))
 }
 
+# trying with cluster-robust stanard errors approach
+lme_helper_crse <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
+  
+  # need to add genotype of lead variant to a column
+  gt <- unlist(geno_mat[snp_name,])
+  data_in <- cbind.data.frame(data_in,gt[as.character(data_in[,'donors'])]) # needs to be character because indexing doesnt work if it's a factor
+  colnames(data_in)[ncol(data_in)] <- 'geno'
+  
+  if ('batch' %in% colnames(data_in)) {
+    base_eqn <- paste0('expr ~ geno + batch')
+  } else {
+    base_eqn <- paste0('expr ~ geno')
+  }
+  
+  covars_vec <- colnames(data_in)
+  covars_vec <- covars_vec[!(covars_vec %in% c('expr','donors','batch','geno'))]
+  covar_eqn <- paste0(covars_vec, collapse = " + ")
+  pc_g_intr_eqn <- paste0("geno:PC", 1:n_PCs, collapse = " + ")
+  
+  # create formula with all variables
+  f_mod_vars <- paste(base_eqn,covar_eqn,pc_g_intr_eqn,sep = " + ")
+  f_mod_form <- as.formula(f_mod_vars)
+  
+  model <- lm(f_mod_form, data = data_in)
+  vcov_mat <- vcovCL(model, cluster = ~ donors)
+  coef_mat <- coeftest(model, vcov = vcov_mat)
+  coef_mat <- coef_mat[c('geno',paste0("geno:PC", 1:n_PCs)),]
+  return(list(coef_mat,vcov_mat))
+}
+
 get_per_cell_pv <- function(data_in,coef_mat,n_PCs,use_ivw=TRUE,ivw_type='orig_var') {
   intr_pc_names <- paste0("geno:PC", 1:n_PCs)
   pc_names <- paste0("PC", 1:n_PCs)
@@ -170,6 +200,8 @@ get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat) {
   
   pval <- pnorm(abs(zsc), mean = 0, sd = 1, lower.tail = FALSE) * 2
   
+  # pval <- pt(abs(zsc), df=40, lower.tail = FALSE) * 2
+
   return(pval)
 }
 
@@ -229,15 +261,22 @@ get_per_cell_pv_covar_sig_only <- function(data_in,coef_mat,n_PCs,vcov_mat,pc_nd
   if (length(pc_ndx_keep)==1) {
     coefs <- coef_mat[intr_pc_names,'Estimate',drop=FALSE]
     std_err <- coef_mat[intr_pc_names,'Std. Error',drop=FALSE]
+    
+    pcs_select <- as.matrix(data_in[,pc_names,drop=FALSE])
+    
+    expanded_coefs <- pcs_select %*% coefs[1,1]
+    expanded_errors <- pcs_select %*% std_err[1,1] # sd gets multiplied by the constant
   } else {
     coefs <- coef_mat[intr_pc_names,'Estimate']
     std_err <- coef_mat[intr_pc_names,'Std. Error']
+    
+    pcs_select <- as.matrix(data_in[,pc_names,drop=FALSE])
+    
+    expanded_coefs <- pcs_select %*% diag(coefs)
+    expanded_errors <- pcs_select %*% diag(std_err) # sd gets multiplied by the constant
   }
   
-  pcs_select <- as.matrix(data_in[,pc_names,drop=FALSE])
-  
-  expanded_coefs <- pcs_select %*% diag(coefs)
-  expanded_errors <- pcs_select %*% diag(std_err) # sd gets multiplied by the constant
+
   
   # now computing the expanded variance with covariance terms using formula from case 3 of: https://mattgolder.com/wp-content/uploads/2015/05/standarderrors1.png
   covar_list <- list()
@@ -393,9 +432,11 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
     snp_res <- lapply(1:nrow(main_tr),FUN = function(snp_j) {
       snp_name <- rownames(main_tr)[snp_j]
       lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs,julia)
+      # lme_out <- lme_helper_crse(data,geno_mat,snp_name,n_PCs,julia)
       coef_mat <- lme_out[[1]]
       vcov_mat <- lme_out[[2]]
       per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
+      # per_cell_pvals <- get_per_cell_pv(data,coef_mat,n_PCs,use_ivw = FALSE)
       return(per_cell_pvals)
     })
   }
