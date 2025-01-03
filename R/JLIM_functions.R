@@ -651,7 +651,7 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
   # per_cell_jlim_un[per_cell_jlim_un==1] <- 1-(1/nrow(null_dist[[2]]))
   
   if (sum(cells_test_ind)==0) {
-    return(list(NA,per_cell_jlim_un))
+    return(list(NA,per_cell_jlim_un,c()))
   }
   cells_test_ind <- which(cells_test_ind) # logical to indices
   
