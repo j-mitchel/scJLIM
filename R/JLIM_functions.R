@@ -424,7 +424,7 @@ get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8,pro
   NULLDIST <- perm.test(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
                         r2res=r2res, lambda.t=Inf, n.cores=n.cores, progress=progress)
   
-  return(list(NULLDIST,permmat,r2res))
+  return(list(NULLDIST,r2res))
 }
 
 jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.count){
@@ -439,8 +439,7 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
   indexSNP <- jlim_vars[[7]]
   
   NULLDIST <- null_dist[[1]]
-  permmat <- null_dist[[2]]
-  r2res <- null_dist[[3]]
+  r2res <- null_dist[[2]]
   
   results.allgene <- matrix(ncol=13, nrow=0)
   colnames(results.allgene) <- c("userIdxBP"," actualIdxBP","STAT", "pvalue",
@@ -473,12 +472,11 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
       stop("too few common SNPs to run JLIM")
   }
   
-  jlim.res <- SNPselction(assoc1, assoc2, ld1=ld1, ld2=ld2, ld0.maf, permmat, r2res = r2res,
+  jlim.res <- SNPselction(assoc1, assoc2, ld1=ld1, ld2=ld2, ld0.maf, r2res = r2res,
                              refgt_num, sectr.sample.size, min.SNPs.count,
                           indexSNP=indexSNP, NULLDIST)
   jlim.res@userIdxBP <- indexSNP
-  permmat=jlim.res@permmat
-  
+
   # cat("\nJLIM results:",colnames(results.allgene),"\n",sep = "   ")
   # cat("\n",getVec.jlim(jlim.res))
   results.allgene <- rbind (results.allgene, getVec.jlim(jlim.res))
@@ -488,7 +486,7 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
 
 
 ## adapted from JLIM package
-SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
+SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
                         refgt0, sectr.sample.size,
                         min.SNPs.count, indexSNP, NULLDIST){
   
@@ -526,8 +524,7 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
                   sectrIndSNPpvalue=sectrIndSNPpvalue,
                   sectrMinpvalue=sectrMinpvalue,
                   sectrSNPWithMinpvalue=sectrSNPWithMinpvalue,
-                  desc="", executedPerm=0,
-                  permmat=permmat)
+                  desc="", executedPerm=0)
   
   # check the number of remaining snps in the assoc1
   if(nrow(assoc1.t) < min.SNPs.count ){
@@ -537,7 +534,7 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
   lambda.t <- calc.stat(assoc1.t, assoc2.t, ld1.t, ld2.t, r2res)
   
   #########################################################################
-  executedPerm <- nrow(permmat)
+  executedPerm <- length(NULLDIST)
   
   permP <- sum(NULLDIST >= lambda.t, na.rm=TRUE)/sum(!is.na(NULLDIST))
   
@@ -545,7 +542,6 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, permmat, r2res,
   jlim.res@STAT=lambda.t
   jlim.res@pvalue=permP
   jlim.res@executedPerm=executedPerm
-  jlim.res@permmat=permmat
   return(jlim.res)
 }
 
@@ -646,9 +642,9 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
   
   #### to run cauchy combination test, can't have pvals exactly 0 or 1
   # # set pvals==0 to be equal to 1/number of permuatations
-  # per_cell_jlim_un[per_cell_jlim_un==0] <- 1/nrow(null_dist[[2]])
+  # per_cell_jlim_un[per_cell_jlim_un==0] <- 1/length(null_dist[[1]])
   # # set pvals==1 to be 1-(1/number of permuatations)
-  # per_cell_jlim_un[per_cell_jlim_un==1] <- 1-(1/nrow(null_dist[[2]]))
+  # per_cell_jlim_un[per_cell_jlim_un==1] <- 1-(1/length(null_dist[[1]]))
   
   if (sum(cells_test_ind)==0) {
     return(list(NA,per_cell_jlim_un,c()))
@@ -671,16 +667,6 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     global_p <- ACAT(per_cell_jlim_un[cells_test_ind])
   } else if (global_adjust_method=='n_eff_bon') {
     global_p <- min(c(min(per_cell_jlim_un) * n_eff,1))
-  } else if (global_adjust_method=='cauchy_omni') {
-    global_p1 <- ACAT(per_cell_jlim_un[cells_test_ind])
-    global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
-    global_p <- ACAT(c(global_p1,global_p2))
-  } else if (global_adjust_method=='all_methods') {
-    global_p1 <- ACAT(per_cell_jlim_un[cells_test_ind])
-    global_p2 <- min(c(min(per_cell_jlim_un) * n_eff,1-(1/nrow(null_dist[[2]]))))
-    global_p <- ACAT(c(global_p1,global_p2))
-    global_p <- c(global_p1,global_p2,global_p)
-    names(global_p) <- c('cauchy','n_eff_bon','cauchy_omni')
   } else {
     stop('use one of the available global adjust methods')
   }

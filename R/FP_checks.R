@@ -64,9 +64,7 @@ snp_id_helper <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size,
   ld_cormat <- jlim_vars[[6]]
   indexSNP <- jlim_vars[[7]]
   
-  NULLDIST <- null_dist[[1]]
-  permmat <- null_dist[[2]]
-  r2res <- null_dist[[3]]
+  r2res <- null_dist[[2]]
   
   results.allgene <- matrix(ncol=13, nrow=0)
   colnames(results.allgene) <- c("userIdxBP"," actualIdxBP","STAT", "pvalue",
@@ -135,8 +133,7 @@ snp_id_helper <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size,
                   sectrIndSNPpvalue=sectrIndSNPpvalue,
                   sectrMinpvalue=sectrMinpvalue,
                   sectrSNPWithMinpvalue=sectrSNPWithMinpvalue,
-                  desc="", executedPerm=0,
-                  permmat=permmat)
+                  desc="", executedPerm=0)
   
   # check the number of remaining snps in the assoc1
   if(nrow(assoc1.t) < min.SNPs.count ){
