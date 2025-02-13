@@ -10,6 +10,8 @@ detect_pattern <- function(jlim_res,cell_pcs,sig_thresh_pv=.001) {
   # loop through PCs
   sig_thresh <- -log10(sig_thresh_pv)
   sig_vals <- jlim_res[[2]]
+  max_non_zero <- max(sig_vals[sig_vals!=0])
+  sig_vals[sig_vals==0] <- max_non_zero
   pcs_flag <- c()
   pc_side_flagged <- c()
   for (pc in 1:ncol(cell_pcs)) {
@@ -223,7 +225,7 @@ check_snp_direc <- function(snp_res_mat,jlim_vars,cell_pcs,pc_flags,pc_snps) {
       return(x[snp_ndx])
     })
     snp_pvals <- -log10(snp_pvals)
-    tmp <- cbind.data.frame(cell_pcs,snp_pvals)
+    tmp <- cbind.data.frame(as.matrix(cell_pcs),snp_pvals)
     pc_nm <- paste0('PC',pcs_flag[pc_ndx])
     myform <- as.formula(paste0('snp_pvals ~ ',pc_nm))
     lmres <- summary(lm(myform,data=tmp))
