@@ -597,6 +597,12 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     # select pvalues for all snps for a cell
     names(snp_res_un) <- rownames(main_tr)
     ## make sec_tr df
+    
+    # if there are any 0 eQTL pvalues, set to the largest non-zero pvalue
+    if (any(snp_res_un==0)) {
+      snp_res_un[snp_res_un==0] <- min(snp_res_un[snp_res_un!=0])
+    }
+    
     sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un)
     colnames(sec_tr) <- c('CHR','BP','P')
     
