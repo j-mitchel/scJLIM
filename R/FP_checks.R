@@ -225,6 +225,7 @@ check_snp_direc <- function(snp_res_mat,jlim_vars,cell_pcs,pc_flags,pc_snps) {
       return(x[snp_ndx])
     })
     snp_pvals <- -log10(snp_pvals)
+    snp_pvals[is.infinite(snp_pvals)] <- max(snp_pvals[is.finite(snp_pvals)])
     tmp <- cbind.data.frame(as.matrix(cell_pcs),snp_pvals)
     pc_nm <- paste0('PC',pcs_flag[pc_ndx])
     myform <- as.formula(paste0('snp_pvals ~ ',pc_nm))
