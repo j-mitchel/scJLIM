@@ -177,38 +177,69 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
   ASSERT(ncol(permmat) == nrow(ld0))
   ASSERT(ncol(permmat) == nrow(ld2))
   
-  cl <- makeCluster(n.cores)
-  clusterExport(cl, c("ASSERT","abs","max","sum","is.na","which","permmat","markers.p1","thresholdingZ","maxI1","ld0","r2res","relP1"), 
-                envir=environment())
-  NULLGAP <- parLapply(cl, X = 1:nrow(permmat), fun = function(simNo) {
-    assoc2n.Z <- permmat[simNo, ]
-    
-    ASSERT(sum(is.na(assoc2n.Z)) == 0)
-    
-    # SNP selection part 2
-    markers.p <-
-      markers.p1 | (abs(assoc2n.Z) >= thresholdingZ)
-    
-    ASSERT(markers.p[maxI1]) # always include maxI1
-    
-    # need multiple markers
-    local <- intersect(which(ld0[maxI1, ]**2 >= r2res),
-                       which(markers.p))
-    
-    logP2n <- (abs(assoc2n.Z) ** 2) / 2
-    
-    # gap is the joint likelihood statistic
-    gap <-
-      sum(relP1[local] *
-            sapply(local, function (I)
-              (logP2n[I] -
-                 max(logP2n[(ld2[I, ]**2 < r2res) & markers.p])),
-              simplify=TRUE))
-    
-    gap_norm <- gap / sum(relP1[local]) # statistic gets normalized
-    return(gap_norm)
-  })
-  stopCluster(cl)
+  if (n.cores==1) {
+    NULLGAP <- lapply(1:nrow(permmat),function(simNo) {
+      assoc2n.Z <- permmat[simNo, ]
+      
+      ASSERT(sum(is.na(assoc2n.Z)) == 0)
+      
+      # SNP selection part 2
+      markers.p <-
+        markers.p1 | (abs(assoc2n.Z) >= thresholdingZ)
+      
+      ASSERT(markers.p[maxI1]) # always include maxI1
+      
+      # need multiple markers
+      local <- intersect(which(ld0[maxI1, ]**2 >= r2res),
+                         which(markers.p))
+      
+      logP2n <- (abs(assoc2n.Z) ** 2) / 2
+      
+      # gap is the joint likelihood statistic
+      gap <-
+        sum(relP1[local] *
+              sapply(local, function (I)
+                (logP2n[I] -
+                   max(logP2n[(ld2[I, ]**2 < r2res) & markers.p])),
+                simplify=TRUE))
+      
+      gap_norm <- gap / sum(relP1[local]) # statistic gets normalized
+      return(gap_norm)
+    })
+  } else {
+    cl <- makeCluster(n.cores)
+    clusterExport(cl, c("ASSERT","abs","max","sum","is.na","which","permmat","markers.p1","thresholdingZ","maxI1","ld0","r2res","relP1"), 
+                  envir=environment())
+    NULLGAP <- parLapply(cl, X = 1:nrow(permmat), fun = function(simNo) {
+      assoc2n.Z <- permmat[simNo, ]
+      
+      ASSERT(sum(is.na(assoc2n.Z)) == 0)
+      
+      # SNP selection part 2
+      markers.p <-
+        markers.p1 | (abs(assoc2n.Z) >= thresholdingZ)
+      
+      ASSERT(markers.p[maxI1]) # always include maxI1
+      
+      # need multiple markers
+      local <- intersect(which(ld0[maxI1, ]**2 >= r2res),
+                         which(markers.p))
+      
+      logP2n <- (abs(assoc2n.Z) ** 2) / 2
+      
+      # gap is the joint likelihood statistic
+      gap <-
+        sum(relP1[local] *
+              sapply(local, function (I)
+                (logP2n[I] -
+                   max(logP2n[(ld2[I, ]**2 < r2res) & markers.p])),
+                simplify=TRUE))
+      
+      gap_norm <- gap / sum(relP1[local]) # statistic gets normalized
+      return(gap_norm)
+    })
+    stopCluster(cl)
+  }
   
   NULLGAP <- unlist(NULLGAP)
   
@@ -227,17 +258,27 @@ get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores, progress) 
   # permmat <- matrix(0, nrow=nperm, ncol=nrow(refgt_num))
   refgt_num <- t(refgt_num)
   
-  cl <- makeCluster(n.cores)
-  clusterExport(cl, c("refgt_num","sample","nrow","sectr.sample.size","y"), 
-                envir=environment())
-  permmat_list <- parLapply(cl, X=1:nperm, fun = function(IP) {
-    sampledgt <- refgt_num[sample(1:nrow(refgt_num), sectr.sample.size, replace=TRUE),]
-    
-    z_vec <- c(y[IP, , drop=FALSE] %*% sampledgt)
-    
-    return(z_vec)
-  })
-  stopCluster(cl)
+  if (n.cores==1) {
+    permmat_list <- lapply(1:nperm, function(IP) {
+      sampledgt <- refgt_num[sample(1:nrow(refgt_num), sectr.sample.size, replace=TRUE),]
+      
+      z_vec <- c(y[IP, , drop=FALSE] %*% sampledgt)
+      
+      return(z_vec)
+    })
+  } else {
+    cl <- makeCluster(n.cores)
+    clusterExport(cl, c("refgt_num","sample","nrow","sectr.sample.size","y"), 
+                  envir=environment())
+    permmat_list <- parLapply(cl, X=1:nperm, fun = function(IP) {
+      sampledgt <- refgt_num[sample(1:nrow(refgt_num), sectr.sample.size, replace=TRUE),]
+      
+      z_vec <- c(y[IP, , drop=FALSE] %*% sampledgt)
+      
+      return(z_vec)
+    })
+    stopCluster(cl)
+  }
   
   permmat <- do.call(rbind,permmat_list)
   permmat <- permmat / sqrt(sectr.sample.size)
