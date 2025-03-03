@@ -516,6 +516,10 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
   jlim.res <- SNPselction(assoc1, assoc2, ld1=ld1, ld2=ld2, ld0.maf, r2res = r2res,
                              refgt_num, sectr.sample.size, min.SNPs.count,
                           indexSNP=indexSNP, NULLDIST)
+  
+  if (is.null(jlim.res)) {
+    return(NA)
+  }
   jlim.res@userIdxBP <- indexSNP
 
   # cat("\nJLIM results:",colnames(results.allgene),"\n",sep = "   ")
@@ -569,7 +573,8 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
   
   # check the number of remaining snps in the assoc1
   if(nrow(assoc1.t) < min.SNPs.count ){
-    stop("too few SNPs to run JLIM")
+    message("too few SNPs to run JLIM")
+    return(NULL)
   }
   
   lambda.t <- calc.stat(assoc1.t, assoc2.t, ld1.t, ld2.t, r2res)
@@ -667,11 +672,19 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     
     jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
                           min.SNPs.count=min.SNPs.count)
+    
+    if (is.na(jlim_res[1])) {
+      return(NA)
+    }
+    
     pval <- as.numeric(jlim_res[1,'pvalue'])
     return(list(c_test,pval))
-    # return(pval)
   })
   stopCluster(cl)
+  
+  if (any(is.na(per_cell_jlim))) {
+    return(NA)
+  }
   
   cells_test_ind <- sapply(per_cell_jlim,function(i){
     return(i[[1]])
