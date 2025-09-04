@@ -431,6 +431,11 @@ prep_jlim <- function(main_tr,refLD.dir=NULL,refLD.mat=NULL,min.MAF=.05) {
   
   # sort variants by pos
   main_tr <- main_tr[match(sort(main_tr$BP),main_tr$BP),]
+  
+  if (any(main_tr$P==0)) {
+    warning('The input GWAS data contains p-values equal to exactly 0. Setting these to the minimun non-zero p-value.')
+    main_tr$P[main_tr$P==0] <- min(main_tr$P[main_tr$P!=0])
+  }
 
   # get the index snp (lead GWAS SNP)
   indexSNP <- main_tr[main_tr$P==min(main_tr$P),'BP'][1]
