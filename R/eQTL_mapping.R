@@ -1,4 +1,18 @@
 
+#' Fit a mixed model for one SNP and extract coefficients
+#'
+#' @param data_in data.frame A data object with cells as rows. Expression values
+#' are in the first column with PCs in the next columns, followed by donors and
+#' other covariate data.
+#' @param geno_mat data.frame Donor genotype data (SNPs x donors)
+#' @param snp_name character The name of the SNP to test. Should match the name
+#' of a row from geno_mat.
+#' @param n_PCs numeric The number of PCs and PC-interaction terms to use
+#' @param julia environment The output of julia_setup()
+#'
+#' @return a list with the coefficients matrix in the first element and the
+#' variance-covariance matrix in the second element
+#' @export
 lme_helper <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
 
   # need to add genotype of lead variant to a column
@@ -44,6 +58,19 @@ lme_helper <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
   return(list(coef_mat,vcov_mat))
 }
 
+#' Compute total effects, errors, and p-values per cell for one SNP
+#'
+#' @param data_in data.frame A data object with cells as rows. Expression values
+#' are in the first column with PCs in the next columns, followed by donors and
+#' other covariate data.
+#' @param coef_mat data.frame The first list element output from lme_helper(), containing
+#' the mixed model term coefficients, standard errors, and p-values.
+#' @param n_PCs numeric The number of PCs and PC interaction terms used.
+#' @param vcov_mat matrix The second list element output from lme_helper(), containing
+#' the variance and covariances between each model term.
+#'
+#' @return a numeric vector containing the p-values for all cells
+#' @export
 get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat) {
   intr_pc_names <- paste0("geno:PC", 1:n_PCs)
   pc_names <- paste0("PC", 1:n_PCs)
@@ -102,17 +129,15 @@ get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat) {
 #' the number of alternate alleles per donor (0, 1, or 2)
 #' @param main_tr data.frame The GWAS locus data with columns as 'CHR','BP','P', corresponding
 #' to chromosome, position, and p-value
+#' @param julia_dir character The directory of your Julia installation
 #' @param geno_pcs matrix Optional donor by PC matrix to include as covariates in the model.
-#' Columns should be labeled as geno_PC1, geno_PC2, etc.
-#' @param n.cores numeric Number of cores to use
-#' @param ivw_type character Set to 'orig_var' to use one over the interaction term variances as
-#' the weights. Set to 'pc_expanded_var' to use one over the PC expanded interaction term variances
-#' as the weights.
+#' Columns should be labeled as geno_PC1, geno_PC2, etc. (default=NULL)
+#' @param n.cores numeric Number of cores to use (default=4)
+#' @param progress logical Whether to show a progress bar (default=TRUE)
 #'
-#' @return
+#' @return A list with one element per cell. Each element contains a vector with the p-values
+#' for each tested SNP for the given cell.
 #' @export
-#'
-#' @examples
 get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat,main_tr,julia_dir,
                          geno_pcs=NULL,n.cores=4,progress=TRUE) {
 

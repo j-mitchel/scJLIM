@@ -3,7 +3,6 @@
 #' jlim class to keep the result of JLIM single test
 #'
 #'#' @useDynLib scJLIM, .registration = TRUE
-#' @importFrom Rcpp sourceCpp
 #'
 #' @slot userIdxBP user specified index SNP
 #' @slot actualIdxBP actual found index SNP
@@ -20,7 +19,8 @@
 #' @slot executedPerm number of the executed permutations
 #' @slot permmat the permutation matrix used for the JLIM test
 #' @export
-#' @import methods
+#' @import methods ACAT JuliaCall parallel stats
+#' @importFrom utils read.delim
 
 setClass("jlim",
          slots = list(
@@ -41,7 +41,6 @@ setClass("jlim",
            permmat="matrix"
          ))
 
-#getVec.jlim <- function(object){}
 setGeneric("getVec.jlim", function(object) standardGeneric("getVec.jlim"))
 setMethod("getVec.jlim",
           "jlim",
@@ -54,9 +53,17 @@ setMethod("getVec.jlim",
 
 
 
-# loads the reference panel and filters out low MAF variants
-loadRefLD <- function(refgt, start.bp, end.bp, assoc2.genes.org,
-                       assoc2.genes, min.MAF ){
+#' Load the reference panel and filters out low MAF variants
+#'
+#' @param refgt data.frame Reference haplotypes with columns of CHROM, POS, REF, ALT, GT, 
+#' followed by the base of each each individual. Needs to use same reference genome as your GWAS and eQTL
+#' genotype data. (default=NULL)
+#' @param start.bp numeric The starting BP of the locus to test
+#' @param end.bp numeric The ending BP of the locus to test
+#' @param min.MAF numeric The minimum MAF threshold for selecting SNPs
+#'
+#' @return list containing the ref LD matrix and MAFs of each SNP
+loadRefLD <- function(refgt, start.bp, end.bp, min.MAF){
   ld0.maf <- NULL
 
   #  reference gt from 1000 genomes
@@ -78,9 +85,6 @@ loadRefLD <- function(refgt, start.bp, end.bp, assoc2.genes.org,
   if (sum(duplicated(refgt$POS)) > 0) {
     dup.POS <- refgt$POS[duplicated(refgt$POS)]
 
-    MSG("\nRemoving multiple common alleles at same BP in refgt: BP =",
-        paste(dup.POS, collapse=", "))
-
     ld0.maf <- ld0.maf[!(refgt$POS %in% dup.POS)]
     refgt <- refgt[!(refgt$POS %in% dup.POS), ]
   }
@@ -89,8 +93,13 @@ loadRefLD <- function(refgt, start.bp, end.bp, assoc2.genes.org,
   return (reslist)
 }
 
-# convert matrix of genotypes into matrix of 1s and 2s for ref/alt
-# also getting the LD matrix of pearson correlations
+#' Convert matrix of genotypes into matrix of 1s and 2s for ref/alt. Also 
+#' get the LD matrix of pearson correlations.
+#'
+#' @param refgt.org data.frame MAF thresholded reference haplotypes with the 
+#' same column variables as before
+#'
+#' @return list with the LD matrix and modified haplotype data
 process.refPanels <- function(refgt.org) {
 
   refgt.org <- refgt.org[order(refgt.org$POS), ]
@@ -127,6 +136,17 @@ process.refPanels <- function(refgt.org) {
   return(list(ld0,refgt.mat))
 }
 
+#' Calculate the JLIM statistic
+#'
+#' @param assoc1 data.frame The GWAS statistics as main_tr but with an additional
+#' column, Z, containing the Z scores for each SNP
+#' @param assoc2 data.frame The eQTL statistics
+#' @param ld0 matrix The reference LD matrix for GWAS
+#' @param ld2 matrix The reference LD matrix for eQTLs (or can be same as ld0)
+#' @param R2thr numeric The LD window threshold for calculating the JLIM statistic.
+#' SNP significance is compared from within to outside this window
+#'
+#' @return The numeric JLIM statistic for the test
 calc.stat <- function (assoc1, assoc2, ld0, ld2, R2thr) {
 
   logP1 <- (abs(assoc1$Z) ** 2) / 2
@@ -155,9 +175,22 @@ calc.stat <- function (assoc1, assoc2, ld0, ld2, R2thr) {
   return(gap)
 }
 
-#' @export
+#' Generate the null statistics for null simulated eQTL data
+#'
+#' @param assoc1 data.frame The GWAS statistics as main_tr but with an additional
+#' column, Z, containing the Z scores for each SNP
+#' @param permmat matrix Z-scores for the null eQTL data
+#' @param ld0 matrix The LD correlation matrix
+#' @param ld2 matrix The LD correlation matrix (can be the same as ld0 or different if
+#' specifically for the eQTL individuals)
+#' @param r2res numeric The LD window threshold for calculating the JLIM statistic.
+#' SNP significance is compared from within to outside this window
+#' @param n.cores numeric The number of cores to use in parallelization
+#' @param progress logical Whether to show progress
+#'
+#' @return A vector of the null JLIM statistics
 perm.test <- function (assoc1, permmat, ld0, ld2,
-                       r2res, lambda.t, n.cores, progress=progress) {
+                       r2res, n.cores, progress=progress) {
 
   thresholdingZ <- PtoZ(0.1)
 
@@ -246,7 +279,15 @@ perm.test <- function (assoc1, permmat, ld0, ld2,
   return(NULLGAP)
 }
 
-# refgt_num is the reference panel with ref/alt as 1s and 2s
+#' Generate a matrix of null eQTL z-scores (nperm x snps)
+#'
+#' @param refgt_num data.frame The reference panel with ref/alt as 1s and 2s
+#' @param sectr.sample.size numeric The number of eQTL individuals
+#' @param nperm numeric The size of the null distribution
+#' @param n.cores numeric The number of cores to use
+#' @param progress logical Whether to show progress
+#'
+#' @return a matrix of null eQTL Z-scores
 get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores, progress) {
   snpIds <- rownames(refgt_num)
   refgt_num <- toGT(refgt_num)
@@ -296,12 +337,21 @@ get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores, progress) 
   return(permmat)
 }
 
-# converts p-values to Z-scores
+#' Converts p-values to Z-scores
+#'
+#' @param pv numeric A p-value
+#'
+#' @return A z-score corresponding to the p-value
 PtoZ <- function(pv) {
   -qnorm(pv/2)
 }
 
-# creates genotypes from haplotypes by summing number of alternate alleles from two random haplotypes
+#' Helper function that creates genotypes from haplotypes by summing number of
+#' alternate alleles from two random haplotypes
+#'
+#' @param gt matrix Contains reference haplotypes as 1s and 2s
+#'
+#' @return a matrix of simulated genotypes from haplotypes
 toGT <- function(gt) {
   M <- ncol(gt)/2
   gt.alt <- (gt != 1) + 0 # nonref
@@ -309,7 +359,11 @@ toGT <- function(gt) {
          byrow=TRUE, ncol=M)
 }
 
-# standardize 0s and 1s matrix of genotypes
+#' Standardize 0s and 1s matrix of genotypes
+#'
+#' @param gt matrix Simulated genotypes from reference haplotypes
+#'
+#' @return a standardized reference genotypes matrix
 stdGT2 <- function(gt) {
   f <- apply(gt, 2, mean)/2
   for (I in 1:ncol(gt)) {
@@ -330,8 +384,15 @@ ASSERT <- function(test) {
   }
 }
 
-# find the proper ref-panel from the list of the files in the specified path
-find.panel <-function( refLD.dir, start.bp, end.bp, CHR ) {
+#' Find the proper ref-panel from the list of the files in the specified path
+#'
+#' @param refLD.dir character The directory containing the reference haplotype files
+#' @param start.bp integer The starting BP of the locus to test
+#' @param end.bp integer The ending BP of the locus to test
+#' @param CHR integer The chr of the locus to test
+#'
+#' @return The character name of the file to load
+find.panel <- function(refLD.dir, start.bp, end.bp, CHR) {
 
   ref.LD.list <- vector()
   ref.LD.list0 <-
@@ -363,6 +424,14 @@ find.panel <-function( refLD.dir, start.bp, end.bp, CHR ) {
   return(paste(refLD.dir,"/",ref.LD.list0[panel.toUse],sep=""))
 }
 
+#' Filter rare variants from the reference haplotypes
+#'
+#' @param refgt data.frame Reference haplotypes with columns of CHROM, POS, REF, ALT, GT, 
+#' followed by the base of each each individual. Needs to use same reference genome as your GWAS and eQTL
+#' genotype data. (default=NULL)
+#' @param refgt.all.sel logical Indicates which rows of refgt to select
+#'
+#' @return a filtered refgt object
 calcMAF.refPanels <- function(refgt, refgt.all.sel) {
 
   refgt0 <- refgt[refgt.all.sel, ]
@@ -391,11 +460,25 @@ calcMAF.refPanels <- function(refgt, refgt.all.sel) {
   return(meanF0)
 }
 
-# function to generate a single null distribution and other needed inputs for main
-# jlim.test function
-# this only gets run once per full gene-cell type test (not per cell)
-# should be run before colocalization
-# should not depend on sec_tr because this changes for each cell in coloc test
+
+#' Prepares raw data objects for running scJLIM
+#'
+#' @param main_tr data.frame The GWAS summary statistics with columns of CHR, 
+#' BP, and P
+#' @param refLD.dir character Directory location of reference haplotype directory
+#' when different segments are in separate files. For example, you can download 
+#' https://www.dropbox.com/s/1uaw5zlpwhz3ipz/refld.1kg.nfe.b37.tar.gz?dl=0
+#' for hg19 1000GP Non-Finnish Europeans (NFE) and set this parameter to the directory
+#' /refld.1kg.nfe.b37. This file and others can be also be found here 
+#' https://github.com/cotsapaslab/jlim. (default=NULL)
+#' @param refLD.mat data.frame Required if refLD.dir is not supplied. Reference 
+#' haplotypes with columns of CHROM, POS, REF, ALT, GT, followed by the base of 
+#' each each individual. Needs to use same reference genome as your GWAS and eQTL
+#' genotype data. (default=NULL)
+#' @param min.MAF numeric A minimum threshold to select SNPs for analysis (default=.05)
+#'
+#' @return a list of data objects for use in downstream JLIM functions
+#' @export
 prep_jlim <- function(main_tr,refLD.dir=NULL,refLD.mat=NULL,min.MAF=.05) {
   if (is.null(refLD.dir) & is.null(refLD.mat)) {
     stop('need to supply either refLD.dir or refLD.mat')
@@ -416,8 +499,7 @@ prep_jlim <- function(main_tr,refLD.dir=NULL,refLD.mat=NULL,min.MAF=.05) {
   }
 
   # process the refgt matrix, remove low MAF variants, and get out maf vector
-  refLD.res <- loadRefLD(refgt, start.bp, end.bp, NULL,
-                         NULL, min.MAF )
+  refLD.res <- loadRefLD(refgt, start.bp, end.bp, min.MAF )
   refgt.org <- refLD.res[[1]] # maf cleaned refgt
   maf_vec <- refLD.res[[2]] # vector of mafs - names are BP. previously named ld0.maf.org
 
@@ -453,6 +535,19 @@ prep_jlim <- function(main_tr,refLD.dir=NULL,refLD.mat=NULL,min.MAF=.05) {
   return(list(main_tr,assoc1,maf_vec,refgt.org,refgt_num,ld_cormat,indexSNP))
 }
 
+#' Generate a null distribution of JLIM statistics
+#'
+#' @param jlim_vars list Preprocessed data objects from prep_jlim()
+#' @param sectr.sample.size numeric The number of individuals for eQTL mapping
+#' @param nperm numeric The size of the null distribution
+#' @param n.cores numeric The number of cores to use
+#' @param r2res numeric the LD window threshold for calculating the JLIM statistic.
+#' SNP significance is compared from within to outside this window. (default=0.8)
+#' @param progress logical To show a progress bar (default=TRUE)
+#'
+#' @return a list containing the null distribution vector in the first element and the 
+#' r2res parameter in the second
+#' @export
 get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8,progress=TRUE) {
   # unpack variables
   main_tr <- jlim_vars[[1]]
@@ -468,12 +563,23 @@ get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8,pro
 
   # subset permutation matrix to same variants as in assoc1
   NULLDIST <- perm.test(assoc1, permmat=permmat,ld0=ld_cormat, ld2=ld_cormat,
-                        r2res=r2res, lambda.t=Inf, n.cores=n.cores, progress=progress)
+                        r2res=r2res, n.cores=n.cores, progress=progress)
 
   return(list(NULLDIST,r2res))
 }
 
-jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.count){
+
+#' Run a single JLIM test
+#'
+#' @param jlim_vars list Preprocessed data objects from prep_jlim()
+#' @param null_dist list The output from get_null_dist()
+#' @param sec_tr data.frame The eQTL results for one cell, with SNPs as rows and 
+#' CHR, BP, and P as columns
+#' @param sectr.sample.size numeric The number of eQTL individuals
+#' @param min.SNPs.count numeric The minimum number of SNPs needed to run
+#'
+#' @return a jlim object containing the test results
+jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.count) {
 
   # unpack variables
   main_tr <- jlim_vars[[1]]
@@ -519,7 +625,7 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
   }
 
   jlim.res <- SNPselction(assoc1, assoc2, ld1=ld1, ld2=ld2, ld0.maf, r2res = r2res,
-                             refgt_num, sectr.sample.size, min.SNPs.count,
+                          sectr.sample.size, min.SNPs.count,
                           indexSNP=indexSNP, NULLDIST)
 
   if (is.null(jlim.res)) {
@@ -527,18 +633,30 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
   }
   jlim.res@userIdxBP <- indexSNP
 
-  # cat("\nJLIM results:",colnames(results.allgene),"\n",sep = "   ")
-  # cat("\n",getVec.jlim(jlim.res))
   results.allgene <- rbind (results.allgene, getVec.jlim(jlim.res))
 
   return(results.allgene)
 }
 
 
-## adapted from JLIM package
+#' Helper function for running JLIM - adapted from main JLIM package
+#'
+#' @param assoc1 data.frame The GWAS summary statistics with Z column added
+#' @param assoc2 data.frame The eQTL summary statistics for a cell
+#' @param ld1 matrix The reference LD matrix for GWAS
+#' @param ld2 matrix The reference LD matrix for eQTL (can just use same as ld1)
+#' @param ld0.maf numeric MAFs for the SNPs in LD matrix, with BP as names
+#' @param r2res numeric The LD window threshold for calculating the JLIM statistic.
+#' SNP significance is compared from within to outside this window
+#' @param sectr.sample.size numeric The number of eQTL individuals. Should be the
+#' same as ncol(geno_mat) as used in get_eQTL_res().
+#' @param min.SNPs.count numeric The minimum number of SNPs needed to run
+#' @param indexSNP integer The BP of the lead GWAS SNP 
+#' @param NULLDIST numeric The null distribution of JLIM statistics
+#'
+#' @return a jlim object containing the results of the test
 SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
-                        refgt0, sectr.sample.size,
-                        min.SNPs.count, indexSNP, NULLDIST){
+                        sectr.sample.size, min.SNPs.count, indexSNP, NULLDIST) {
 
   assoc1.sel <- assoc1$BP[assoc1$P <= 0.1]
   assoc2.sel <- assoc2$BP[assoc2$P <= 0.1]
@@ -596,6 +714,21 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
   return(jlim.res)
 }
 
+#' The main user-facing function for running JLIM colocalization test per cell
+#'
+#' @param snp_res_mat list The output from get_eQTL_res(). Contains one element
+#' per cell with the p-value for each SNP in that cell.
+#' @param jlim_vars list Preprocessed data objects from prep_jlim()
+#' @param null_dist list The output from get_null_dist()
+#' @param sectr.sample.size numeric The number of eQTL individuals. Should be the
+#' same as ncol(geno_mat) as used in get_eQTL_res().
+#' @param min.SNPs.count numeric The minimum number of SNPs needed to run a test
+#' (default=15)
+#' @param n.cores numeric The number of cores to use when running in parallel (default=20)
+#'
+#' @return a list with the cauchy global p-value in the first element and the per
+#' cell p-values in the second element.
+#' @export
 jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
                       min.SNPs.count=15, n.cores=20) {
   main_tr <- jlim_vars[[1]]
@@ -688,8 +821,18 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
 
 
 
-get_acat_cells <- function(pvals,nperm=100000,pv_thresh=.1,initial_step_size=1000) {
-  pvals[pvals==0] <- 1/nperm
+#' Determine which cells contribute to the overall significance 
+#'
+#' @param pvals numeric The per cell pvalues output from jlim_main().
+#' @param null_dist list The output from get_null_dist()
+#' @param pv_thresh numeric The cauchy p-value at which to stop including cells
+#' @param initial_step_size numeric The step size to use initially. Helpful for
+#' it to be roughly 1/10 the number of cells.
+#'
+#' @return A character vector with the names of the significantly contributing cells
+#' @export
+get_acat_cells <- function(pvals,null_dist,pv_thresh=.1,initial_step_size=1000) {
+  pvals[pvals==0] <- 1/length(null_dist[[1]])
   pvals[pvals>.5] <- runif(sum(pvals>.5),min=.5,max=1)
   acat_pv <- ACAT(pvals)
 

@@ -192,6 +192,12 @@ true_ct <- sim.sc.gr2@colData[,'Group',drop=FALSE]
 # saveRDS(list(pcell_counts_norm,covar_df,pseudo_pcs,donor_geno_eqtl,main_tr,ref_matrix,true_ct,causal_snp,eQTL_group,eQTL_gene),
 #         file='/home/jmitchel/scJLIM/data/sim_data.rds',compress = 'xz')
 
+# # saving in secondary location as well
+# sim_dat_all <- readRDS(file='/home/jmitchel/scJLIM/data/sim_data.rds')
+# saveRDS(sim_dat_all,file='/home/jmitchel/data/GWAS_sim_v3/splat_sims/vignette_sim_data.rds',compress = 'xz')
+
+# # saving it as .rda object
+save(sim_dat_all, file = "/home/jmitchel/scJLIM/data/sim_dat_all.rda",compress = "xz")
 
 
 
