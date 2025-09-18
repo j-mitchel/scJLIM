@@ -742,24 +742,24 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
   clusterEvalQ(cl, c(library(ACAT)))
 
   per_cell_jlim <- parLapply(cl,snp_res_mat,function(snp_res_un) {
-    setClass("jlim",
-             slots = list(
-               userIdxBP="numeric",
-               actualIdxBP="numeric",
-               STAT="numeric",
-               pvalue="numeric",
-               usedSNPsNo="numeric",
-               startBP="numeric",
-               endBP="numeric",
-               sectrSampleSize="numeric",
-               sectrGeneName="character",
-               sectrIndSNPpvalue="numeric",
-               sectrMinpvalue="numeric",
-               sectrSNPWithMinpvalue="numeric",
-               desc="character",
-               executedPerm="numeric",
-               permmat="matrix"
-             ))
+    # setClass("jlim",
+    #          slots = list(
+    #            userIdxBP="numeric",
+    #            actualIdxBP="numeric",
+    #            STAT="numeric",
+    #            pvalue="numeric",
+    #            usedSNPsNo="numeric",
+    #            startBP="numeric",
+    #            endBP="numeric",
+    #            sectrSampleSize="numeric",
+    #            sectrGeneName="character",
+    #            sectrIndSNPpvalue="numeric",
+    #            sectrMinpvalue="numeric",
+    #            sectrSNPWithMinpvalue="numeric",
+    #            desc="character",
+    #            executedPerm="numeric",
+    #            permmat="matrix"
+    #          ))
 
     #getVec.jlim <- function(object){}
     setGeneric("getVec.jlim", function(object) standardGeneric("getVec.jlim"))
