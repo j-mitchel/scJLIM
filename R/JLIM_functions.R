@@ -760,17 +760,17 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     #            executedPerm="numeric",
     #            permmat="matrix"
     #          ))
-
-    #getVec.jlim <- function(object){}
-    setGeneric("getVec.jlim", function(object) standardGeneric("getVec.jlim"))
-    setMethod("getVec.jlim",
-              "jlim",
-              function(object) {
-                c(object@userIdxBP, object@actualIdxBP, object@STAT, object@pvalue,
-                  object@usedSNPsNo, object@startBP, object@endBP, object@sectrSampleSize,
-                  object@sectrGeneName, object@sectrIndSNPpvalue, object@sectrMinpvalue,
-                  object@executedPerm, object@desc)
-              })
+    # 
+    # #getVec.jlim <- function(object){}
+    # setGeneric("getVec.jlim", function(object) standardGeneric("getVec.jlim"))
+    # setMethod("getVec.jlim",
+    #           "jlim",
+    #           function(object) {
+    #             c(object@userIdxBP, object@actualIdxBP, object@STAT, object@pvalue,
+    #               object@usedSNPsNo, object@startBP, object@endBP, object@sectrSampleSize,
+    #               object@sectrGeneName, object@sectrIndSNPpvalue, object@sectrMinpvalue,
+    #               object@executedPerm, object@desc)
+    #           })
 
     if (is.na(snp_res_un[1])) {
       return(list(FALSE,1))
