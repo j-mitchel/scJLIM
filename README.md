@@ -20,6 +20,6 @@ install_github("j-mitchel/scJLIM")
 ```
 
 ## Walkthrough
-The repository currently contains a [vignette](https://github.com/j-mitchel/scJLIM/blob/main/vignettes/tutorial.ipynb)
+The repository currently contains a [vignette](https://nbviewer.org/github/j-mitchel/scJLIM/blob/main/vignettes/tutorial.ipynb)
 demonstrating how to use the package.
 
