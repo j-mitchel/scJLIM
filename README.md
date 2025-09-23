@@ -6,8 +6,17 @@ Single-cell eQTL GWAS colocalization tool
 To install the latest version of scITD from GitHub:
 
 ``` r
+# Install the required JuliaCall package and Julia language for mixed model fitting
+install.packages("JuliaCall")
+library(JuliaCall)
+install_julia()
+
+# Install the required ACAT package for calculating cauchy combined p-values
 library(devtools)
-devtools::install_github("j-mitchel/scJLIM")
+install_github("yaowuliu/ACAT")
+
+# Install scJLIM package
+install_github("j-mitchel/scJLIM")
 ```
 
 ## Walkthrough
