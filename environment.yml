@@ -15,4 +15,3 @@ dependencies:
   - r-reticulate
   - bioconductor-singlecellexperiment
   - bioconductor-scater
-  - julia=1.10
