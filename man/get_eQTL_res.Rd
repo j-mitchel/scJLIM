@@ -14,14 +14,17 @@ get_eQTL_res(
   main_tr,
   julia_dir,
   geno_pcs = NULL,
+  model_type = "lme",
+  counts = NULL,
   n.cores = 4,
+  get_beta = FALSE,
   progress = TRUE
 )
 }
 \arguments{
 \item{gene_test}{character The gene to test for cis-eQTLs with}
 
-\item{norm_counts}{matrix Normalized UMI counts matrix (genes x cells)}
+\item{norm_counts}{matrix Normalized UMI counts matrix (genes x cells).}
 
 \item{cell_meta}{data.frame Cell-level metadata. Columns must include 'donors', as
 the model includes donor random effects. Rownames must be cell names. Optionally include a
@@ -44,7 +47,16 @@ to chromosome, position, and p-value}
 \item{geno_pcs}{matrix Optional donor by PC matrix to include as covariates in the model.
 Columns should be labeled as geno_PC1, geno_PC2, etc. (default=NULL)}
 
+\item{model_type}{character Either 'lme' or 'pme' corresponding to linear or poisson models,
+respectively (default='lme')}
+
+\item{counts}{matrix Normalized UMI counts matrix (genes x cells). Must be
+provided if model_type='pme'. (default=NULL)}
+
 \item{n.cores}{numeric Number of cores to use (default=4)}
+
+\item{get_beta}{logical Whether to return beta values in addition to p-values.
+Only returns p-values if FALSE. (default=FALSE)}
 
 \item{progress}{logical Whether to show a progress bar (default=TRUE)}
 }

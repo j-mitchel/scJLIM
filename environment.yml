@@ -1,0 +1,18 @@
+name: scjlim
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.2
+  - r-devtools
+  - r-usethis
+  - r-ps
+  - r-withr
+  - r-desc
+  - r-cowplot
+  - r-viridis
+  - r-ggrastr
+  - r-reticulate
+  - bioconductor-singlecellexperiment
+  - bioconductor-scater
+  - julia=1.10

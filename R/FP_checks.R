@@ -5,6 +5,7 @@
 # For each PC, check if the cells have stronger coloc toward PC center compared to 
 # the extremes (test both sides). The side where such pattern exists also must be
 # more significant compared to the other side to flag it
+#' @export
 detect_pattern <- function(jlim_res,cell_pcs,sig_thresh_pv=.001) {
   ## first looks to see if your per cell jlim pvalues are concentrated in the middle of any individual PC
   # loop through PCs
@@ -173,6 +174,7 @@ snp_id_helper <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size,
 }
 
 # identify the top snp that is most contributing to the colocalization
+#' @export
 identify_snps_contrib <- function(jlim_res,pc_flags,cell_pcs,snp_res_mat,jlim_vars,null_dist,
                                   sectr.sample.size,min.SNPs.count,sig_thresh_pv=.001) {
   main_tr <- jlim_vars[[1]]
@@ -190,8 +192,10 @@ identify_snps_contrib <- function(jlim_res,pc_flags,cell_pcs,snp_res_mat,jlim_va
     } else if (side=='right') {
       cells_sub <- names(mypcs)[mypcs>0]
     }
+    
     top_cells_sig <- names(sig_vals)[sig_vals<sig_thresh_pv]
     top_cells_select <- intersect(cells_sub,top_cells_sig)
+
     all_best_bp <- c()
     for (mycell in top_cells_select) {
       ## now, for these cells, need to regenerate the jlim stats to see which snps contribute to significance
@@ -205,6 +209,7 @@ identify_snps_contrib <- function(jlim_res,pc_flags,cell_pcs,snp_res_mat,jlim_va
       best_bp <- snp_id_helper(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.count)
       all_best_bp <- c(all_best_bp,best_bp)
     }
+    
     best_bp_counts <- table(all_best_bp)
     best_bp <- names(best_bp_counts)[order(best_bp_counts,decreasing=TRUE)][1]
     pc_snps <- c(pc_snps,best_bp)
@@ -213,6 +218,7 @@ identify_snps_contrib <- function(jlim_res,pc_flags,cell_pcs,snp_res_mat,jlim_va
 }
 
 # check if the magnitude of the effect (or significance) of the tested snp gets smaller as the pc gets bigger
+#' @export
 check_snp_direc <- function(snp_res_mat,jlim_vars,cell_pcs,pc_flags,pc_snps) {
   main_tr <- jlim_vars[[1]]
   pcs_flag <- pc_flags[[1]]

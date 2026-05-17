@@ -20,6 +20,12 @@ Imports:
   methods,
   utils
 Suggests:
+  cowplot,
+  viridis,
+  ggrastr,
+  SingleCellExperiment,
+  scater,
+  ggplot2
 RoxygenNote: 7.2.3
 LinkingTo:
 NeedsCompilation: no

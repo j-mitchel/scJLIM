@@ -4,7 +4,7 @@
 \alias{get_per_cell_pv_covar}
 \title{Compute total effects, errors, and p-values per cell for one SNP}
 \usage{
-get_per_cell_pv_covar(data_in, coef_mat, n_PCs, vcov_mat)
+get_per_cell_pv_covar(data_in, coef_mat, n_PCs, vcov_mat, get_beta = FALSE)
 }
 \arguments{
 \item{data_in}{data.frame A data object with cells as rows. Expression values
@@ -18,6 +18,9 @@ the mixed model term coefficients, standard errors, and p-values.}
 
 \item{vcov_mat}{matrix The second list element output from lme_helper(), containing
 the variance and covariances between each model term.}
+
+\item{get_beta}{logical Whether to return beta values in addition to p-values.
+Only returns p-values if FALSE. (default=FALSE)}
 }
 \value{
 a numeric vector containing the p-values for all cells

@@ -342,6 +342,7 @@ get_permmat <- function(refgt_num, sectr.sample.size, nperm, n.cores, progress) 
 #' @param pv numeric A p-value
 #'
 #' @return A z-score corresponding to the p-value
+#' @export
 PtoZ <- function(pv) {
   -qnorm(pv/2)
 }
@@ -724,13 +725,14 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
 #' same as ncol(geno_mat) as used in get_eQTL_res().
 #' @param min.SNPs.count numeric The minimum number of SNPs needed to run a test
 #' (default=15)
+#' @param top_trunc logical Whether to top truncate p-values above .5 (default=TRUE)
 #' @param n.cores numeric The number of cores to use when running in parallel (default=20)
 #'
 #' @return a list with the cauchy global p-value in the first element and the per
 #' cell p-values in the second element.
 #' @export
 jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
-                      min.SNPs.count=15, n.cores=20) {
+                      min.SNPs.count=15, top_trunc=TRUE, n.cores=20) {
   main_tr <- jlim_vars[[1]]
 
   cl <- makeCluster(n.cores)
@@ -783,8 +785,11 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     return(list(NA,per_cell_jlim_un))
   }
 
-  per_cell_jlim_un[per_cell_jlim_un>.5] <- runif(sum(per_cell_jlim_un>.5),min=.5,max=1)
+  if (top_trunc) {
+    per_cell_jlim_un[per_cell_jlim_un>.5] <- runif(sum(per_cell_jlim_un>.5),min=.5,max=1)
+  }
   per_cell_jlim_un[per_cell_jlim_un==0] <- 1/length(null_dist[[1]])
+  
   global_p <- ACAT(per_cell_jlim_un)
 
   return(list(global_p,per_cell_jlim_un))

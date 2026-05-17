@@ -10,6 +10,7 @@ jlim_main(
   null_dist,
   sectr.sample.size,
   min.SNPs.count = 15,
+  top_trunc = TRUE,
   n.cores = 20
 )
 }
@@ -26,6 +27,8 @@ same as ncol(geno_mat) as used in get_eQTL_res().}
 
 \item{min.SNPs.count}{numeric The minimum number of SNPs needed to run a test
 (default=15)}
+
+\item{top_trunc}{logical Whether to top truncate p-values above .5 (default=TRUE)}
 
 \item{n.cores}{numeric The number of cores to use when running in parallel (default=20)}
 }

@@ -58,6 +58,73 @@ lme_helper <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
   return(list(coef_mat,vcov_mat))
 }
 
+
+#' Fit a mixed model for one SNP and extract coefficients
+#'
+#' @param data_in data.frame A data object with cells as rows. Expression values
+#' are in the first column with PCs in the next columns, followed by donors and
+#' other covariate data.
+#' @param geno_mat data.frame Donor genotype data (SNPs x donors)
+#' @param snp_name character The name of the SNP to test. Should match the name
+#' of a row from geno_mat.
+#' @param n_PCs numeric The number of PCs and PC-interaction terms to use
+#' @param julia environment The output of julia_setup()
+#'
+#' @return a list with the coefficients matrix in the first element and the
+#' variance-covariance matrix in the second element
+#' @export
+pme_helper <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
+  
+  # need to add genotype of lead variant to a column
+  gt <- unlist(geno_mat[snp_name,])
+  data_in <- cbind.data.frame(data_in,gt[as.character(data_in[,'donors'])]) # needs to be character because indexing doesnt work if it's a factor
+  colnames(data_in)[ncol(data_in)] <- 'geno'
+  
+  if ('batch' %in% colnames(data_in)) {
+    base_eqn <- paste0('expr ~ geno + (1 | batch) + (1 | donors)')
+  } else {
+    base_eqn <- paste0('expr ~ geno + (1 | donors)')
+  }
+  
+  if (!('log_lib_sizes' %in% colnames(data_in))) {
+    stop("Must have column called 'log_lib_sizes' when using pme model")
+  }
+  
+  covars_vec <- colnames(data_in)
+  covars_vec <- covars_vec[!(covars_vec %in% c('expr','donors','batch','geno','log_lib_sizes'))]
+  covar_eqn <- paste0(covars_vec, collapse = " + ")
+  pc_g_intr_eqn <- paste0("geno:PC", 1:n_PCs, collapse = " + ")
+  
+  # create formula with all variables
+  f_mod_vars <- paste(base_eqn,covar_eqn,pc_g_intr_eqn,sep = " + ")
+  f_mod_form <- as.formula(f_mod_vars)
+  
+  ## trying mixedmodels in julia to see if it's any faster
+  julia$assign("pmm_data_in", data_in)
+  julia$assign("form", f_mod_form)
+  julia$assign("offset_vec", data_in$log_lib_sizes)
+  full_model <- julia$eval("full_model = fit(GeneralizedLinearMixedModel, form, pmm_data_in, Poisson(); offset=offset_vec)",need_return = c("Julia"))
+  
+  beta.fixed <- julia_eval("coef(full_model)")
+  std_err <- julia_eval("full_model.stderror")
+  pvals <- julia_eval("full_model.pvalues")
+  vcov_mat <- julia_eval("vcov(full_model)")
+  
+  coef_mat <- cbind.data.frame(beta.fixed, std_err, pvals)
+  colnames(coef_mat) <- c('Estimate','Std. Error','Pr(>|t|)')
+  fixed_coef_nms <- julia_eval("fixefnames(full_model)")
+  fixed_coef_nms[(length(fixed_coef_nms)-n_PCs+1):length(fixed_coef_nms)] <- paste0("geno:PC", 1:n_PCs)
+  rownames(coef_mat) <- fixed_coef_nms
+  coef_mat <- coef_mat[c('geno',paste0("geno:PC", 1:n_PCs)),]
+  
+  colnames(vcov_mat) <- fixed_coef_nms
+  rownames(vcov_mat) <- fixed_coef_nms
+  
+  return(list(coef_mat,vcov_mat))
+}
+
+
+
 #' Compute total effects, errors, and p-values per cell for one SNP
 #'
 #' @param data_in data.frame A data object with cells as rows. Expression values
@@ -68,31 +135,42 @@ lme_helper <- function(data_in,geno_mat,snp_name,n_PCs,julia) {
 #' @param n_PCs numeric The number of PCs and PC interaction terms used.
 #' @param vcov_mat matrix The second list element output from lme_helper(), containing
 #' the variance and covariances between each model term.
+#' @param get_beta logical Whether to return beta values in addition to p-values.
+#' Only returns p-values if FALSE. (default=FALSE)
 #'
 #' @return a numeric vector containing the p-values for all cells
 #' @export
-get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat) {
+get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat,get_beta=FALSE) {
   intr_pc_names <- paste0("geno:PC", 1:n_PCs)
   pc_names <- paste0("PC", 1:n_PCs)
 
   vcov_mat <- vcov_mat[c('geno',intr_pc_names),c('geno',intr_pc_names)]
   vcov_mat[lower.tri(vcov_mat)] <- 0
   diag(vcov_mat) <- 0
-  vcov_mat <- vcov_mat[,intr_pc_names] # remove geno column
+  vcov_mat <- vcov_mat[,intr_pc_names,drop=FALSE] # remove geno column
 
   coefs <- coef_mat[intr_pc_names,'Estimate']
   std_err <- coef_mat[intr_pc_names,'Std. Error']
 
   pcs_select <- as.matrix(data_in[,pc_names,drop=FALSE])
 
-  expanded_coefs <- pcs_select %*% diag(coefs)
-  expanded_errors <- pcs_select %*% diag(std_err) # sd gets multiplied by the constant
+  if (length(coefs)==1) {
+    expanded_coefs <- pcs_select %*% coefs
+    expanded_errors <- pcs_select %*% std_err # sd gets multiplied by the constant
+  } else {
+    expanded_coefs <- pcs_select %*% diag(coefs)
+    expanded_errors <- pcs_select %*% diag(std_err) # sd gets multiplied by the constant
+  }
 
   # now computing the expanded variance with covariance terms using formula from case 3 of: https://mattgolder.com/wp-content/uploads/2015/05/standarderrors1.png
   covar_list <- list()
   for (myterm in c('geno',intr_pc_names)) {
     term_covars <- vcov_mat[myterm,]
-    expanded_term_covars <- pcs_select %*% diag(term_covars)
+    if (length(term_covars)==1) {
+      expanded_term_covars <- pcs_select %*% term_covars
+    } else {
+      expanded_term_covars <- pcs_select %*% diag(term_covars)
+    }
     if (myterm=='geno') {
       expanded_term_covars <- 2 * expanded_term_covars
     } else {
@@ -110,14 +188,18 @@ get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat) {
 
   pval <- pnorm(abs(zsc), mean = 0, sd = 1, lower.tail = FALSE) * 2
 
-  return(pval)
+  if (get_beta) {
+    return(list(total_effect,pval))
+  } else {
+    return(pval)
+  }
 }
 
 
 #' Main function to run eQTL mapping
 #'
 #' @param gene_test character The gene to test for cis-eQTLs with
-#' @param norm_counts matrix Normalized UMI counts matrix (genes x cells)
+#' @param norm_counts matrix Normalized UMI counts matrix (genes x cells).
 #' @param cell_meta data.frame Cell-level metadata. Columns must include 'donors', as
 #' the model includes donor random effects. Rownames must be cell names. Optionally include a
 #' 'batch' column to also incorporate batch random effects. Include all other covariates to be
@@ -132,20 +214,38 @@ get_per_cell_pv_covar <- function(data_in,coef_mat,n_PCs,vcov_mat) {
 #' @param julia_dir character The directory of your Julia installation
 #' @param geno_pcs matrix Optional donor by PC matrix to include as covariates in the model.
 #' Columns should be labeled as geno_PC1, geno_PC2, etc. (default=NULL)
+#' @param model_type character Either 'lme' or 'pme' corresponding to linear or poisson models,
+#' respectively (default='lme')
+#' @param counts matrix Normalized UMI counts matrix (genes x cells). Must be
+#' provided if model_type='pme'. (default=NULL)
 #' @param n.cores numeric Number of cores to use (default=4)
+#' @param get_beta logical Whether to return beta values in addition to p-values.
+#' Only returns p-values if FALSE. (default=FALSE)
 #' @param progress logical Whether to show a progress bar (default=TRUE)
 #'
 #' @return A list with one element per cell. Each element contains a vector with the p-values
 #' for each tested SNP for the given cell.
 #' @export
 get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat,main_tr,julia_dir,
-                         geno_pcs=NULL,n.cores=4,progress=TRUE) {
+                         geno_pcs=NULL,model_type='lme',counts=NULL,n.cores=4,get_beta=FALSE,progress=TRUE) {
+  
+  if (model_type=='pme' & is.null(counts)) {
+    stop("Need to provide the raw UMI counts counts matrix in 'counts' parameter for use with model_type='pme'.")
+  }
+  
+  if (model_type=='lme') {
+    counts_mat <- norm_counts
+  } else if (model_type=='pme') {
+    counts_mat <- counts
+  } else {
+    stop("The model_type parameter must be set to either 'lme' or 'pme'.")
+  }
 
   if (n_PCs>ncol(cell_pcs)) {
     stop('n_PCs must be >=ncol(cell_pcs)')
   }
 
-  cell_pcs <- cell_pcs[,1:n_PCs]
+  cell_pcs <- cell_pcs[,1:n_PCs,drop=FALSE]
   
   # ensure geno_mat and main_tr have same snps
   snps_int <- intersect(rownames(geno_mat),rownames(main_tr))
@@ -157,13 +257,13 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
   }
 
   # check everything is the right dimensions
-  cell_names <- colnames(norm_counts)
+  cell_names <- colnames(counts_mat)
   if (!all(cell_names %in% rownames(cell_pcs))) {
     stop('Not all cells are in the PC matrix')
   } else if (!all(cell_names %in% rownames(cell_meta))) {
     stop('Not all cells are in the cell_meta data.frame')
-  } else if (!(gene_test %in% rownames(norm_counts))) {
-    stop('gene_test is not in rownames of norm_counts')
+  } else if (!(gene_test %in% rownames(counts_mat))) {
+    stop('gene_test is not in rownames of counts matrix')
   }
 
   # check that a 'donors' column exists in cell_meta
@@ -184,8 +284,8 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
   }
 
   # first make a matrix with all covariates to be reused for mapping each snp
-  data <- cbind.data.frame(norm_counts[gene_test,],
-                                cell_pcs[cell_names,],
+  data <- cbind.data.frame(counts_mat[gene_test,],
+                                cell_pcs[cell_names,,drop=FALSE],
                                 cell_meta[cell_names,])
 
   colnames(data)[1] <- 'expr'
@@ -200,10 +300,12 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
     data <- cbind.data.frame(data,geno_pcs[as.character(data[,'donors']),])
   }
 
-  ### scale expression
-  scaled_expr <- scale(data[,'expr',drop=FALSE])
-  data$expr <- c(scaled_expr)
-
+  ### scale expression if using the linear model
+  if (model_type=='lme') {
+    scaled_expr <- scale(data[,'expr',drop=FALSE])
+    data$expr <- c(scaled_expr)
+  }
+  
   # check for any column names with '.' in it
   col_to_fix <- sapply(colnames(data),function(x){
     return(grepl( '.', x, fixed = TRUE))
@@ -219,7 +321,7 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
   if (n.cores > 1) {
     # using parLapply for parallel processes
     cl <- makeCluster(n.cores)
-    clusterExport(cl, c("julia","julia_dir","lme_helper","get_per_cell_pv_covar","main_tr","data","geno_mat","n_PCs"),
+    clusterExport(cl, c("julia","julia_dir","lme_helper","get_per_cell_pv_covar","main_tr","data","geno_mat","n_PCs","get_beta"),
                   envir=environment())
     # clusterEvalQ(cl, c(library(JuliaCall),julia$library("MixedModels")))
     clusterEvalQ(cl,{
@@ -233,10 +335,14 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
 
     snp_res <- parLapply(cl,X=1:nrow(main_tr),fun = function(snp_j) {
       snp_name <- rownames(main_tr)[snp_j]
-      lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs,julia)
-      coef_mat <- lme_out[[1]]
-      vcov_mat <- lme_out[[2]]
-      per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
+      if (model_type=='lme') {
+        out <- lme_helper(data,geno_mat,snp_name,n_PCs,julia)
+      } else if (model_type=='pme') {
+        out <- pme_helper(data,geno_mat,snp_name,n_PCs,julia)
+      }
+      coef_mat <- out[[1]]
+      vcov_mat <- out[[2]]
+      per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat,get_beta)
       return(per_cell_pvals)
     })
     stopCluster(cl)
@@ -249,18 +355,39 @@ get_eQTL_res <- function(gene_test,norm_counts,cell_meta,cell_pcs,n_PCs,geno_mat
     # slightly faster to use lapply if only using one core per gene test
     snp_res <- lapply(1:nrow(main_tr),FUN = function(snp_j) {
       snp_name <- rownames(main_tr)[snp_j]
-      lme_out <- lme_helper(data,geno_mat,snp_name,n_PCs,julia)
-      coef_mat <- lme_out[[1]]
-      vcov_mat <- lme_out[[2]]
-      per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat)
+      if (model_type=='lme') {
+        out <- lme_helper(data,geno_mat,snp_name,n_PCs,julia)
+      } else if (model_type=='pme') {
+        out <- pme_helper(data,geno_mat,snp_name,n_PCs,julia)
+      }
+      coef_mat <- out[[1]]
+      vcov_mat <- out[[2]]
+      per_cell_pvals <- get_per_cell_pv_covar(data,coef_mat,n_PCs,vcov_mat,get_beta)
       return(per_cell_pvals)
     })
   }
 
-  snp_res_t <- data.table::transpose(snp_res)
-  names(snp_res_t) <- names(snp_res[[1]])
-  # snp names match rownames(main_tr)
-
-  return(snp_res_t)
+  if (get_beta) {
+    beta_all <- lapply(snp_res,function(x) {
+      return(x[[1]])
+    })
+    snp_res <- lapply(snp_res,function(x) {
+      return(x[[2]])
+    })
+    
+    beta_all_t <- data.table::transpose(beta_all)
+    names(beta_all_t) <- names(beta_all[[1]])
+    
+    pv_res_t <- data.table::transpose(snp_res)
+    names(pv_res_t) <- names(snp_res[[1]])
+    
+    return(list(beta_all_t,pv_res_t))
+  } else {
+    snp_res_t <- data.table::transpose(snp_res)
+    names(snp_res_t) <- names(snp_res[[1]])
+    # snp names match rownames(main_tr)
+    
+    return(snp_res_t)
+  }
 }
 
