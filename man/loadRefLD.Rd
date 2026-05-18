@@ -2,7 +2,7 @@
 % Please edit documentation in R/JLIM_functions.R
 \name{loadRefLD}
 \alias{loadRefLD}
-\title{Load the reference panel and filters out low MAF variants}
+\title{#' @useDynLib scJLIM, .registration = TRUE}
 \usage{
 loadRefLD(refgt, start.bp, end.bp, min.MAF)
 }
@@ -21,5 +21,5 @@ genotype data. (default=NULL)}
 list containing the ref LD matrix and MAFs of each SNP
 }
 \description{
-Load the reference panel and filters out low MAF variants
+#' @useDynLib scJLIM, .registration = TRUE
 }

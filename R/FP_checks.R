@@ -124,19 +124,6 @@ snp_id_helper <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size,
   sectrIndSNPpvalue <- assoc2$P[assoc2$BP==indexSNP]
   sectrMinpvalue <- min(assoc2$P)
   sectrSNPWithMinpvalue <- assoc2$BP[ assoc2$P==min(assoc2$P)][1]
-  jlim.res <- new("jlim",
-                  userIdxBP=assoc1.t$BP[best1],
-                  actualIdxBP=assoc1.t$BP[best1],
-                  STAT=NA_real_, pvalue=NA_real_,
-                  usedSNPsNo=nrow(assoc1.t),
-                  startBP= min(assoc1.t$BP),
-                  endBP= max(assoc1.t$BP),
-                  sectrSampleSize=sectr.sample.size,
-                  sectrGeneName="",
-                  sectrIndSNPpvalue=sectrIndSNPpvalue,
-                  sectrMinpvalue=sectrMinpvalue,
-                  sectrSNPWithMinpvalue=sectrSNPWithMinpvalue,
-                  desc="", executedPerm=0)
   
   # check the number of remaining snps in the assoc1
   if(nrow(assoc1.t) < min.SNPs.count ){

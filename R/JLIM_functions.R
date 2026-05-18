@@ -1,59 +1,9 @@
 
 
-#' jlim class to keep the result of JLIM single test
-#'
 #'#' @useDynLib scJLIM, .registration = TRUE
-#'
-#' @slot userIdxBP user specified index SNP
-#' @slot actualIdxBP actual found index SNP
-#' @slot STAT jlim statistic lambda
-#' @slot pvalue permutation pvalue
-#' @slot startBP start position of the tested locus
-#' @slot endBP end position of the tested locus
-#' @slot sectrSampleSize end position of the tested locus
-#' @slot sectrGeneName name of the Gene in case of multiple gene in the second trait
-#' @slot sectrIndSNPpvalue pvalue of the indexSNP in the second trait.
-#' @slot sectrMinpvalue minimum pvalue of in the second trait.
-#' @slot sectrSNPWithMinpvalue  SNP with the minimum pvalue in the second trait
-#' @slot desc  status of the JLIM test
-#' @slot executedPerm number of the executed permutations
-#' @slot permmat the permutation matrix used for the JLIM test
-#' @export
 #' @import methods ACAT JuliaCall parallel stats
 #' @importFrom utils read.delim
-
-setClass("jlim",
-         slots = list(
-           userIdxBP="numeric",
-           actualIdxBP="numeric",
-           STAT="numeric",
-           pvalue="numeric",
-           usedSNPsNo="numeric",
-           startBP="numeric",
-           endBP="numeric",
-           sectrSampleSize="numeric",
-           sectrGeneName="character",
-           sectrIndSNPpvalue="numeric",
-           sectrMinpvalue="numeric",
-           sectrSNPWithMinpvalue="numeric",
-           desc="character",
-           executedPerm="numeric",
-           permmat="matrix"
-         ))
-
-setGeneric("getVec.jlim", function(object) standardGeneric("getVec.jlim"))
-setMethod("getVec.jlim",
-          "jlim",
-          function(object) {
-            c(object@userIdxBP, object@actualIdxBP, object@STAT, object@pvalue,
-              object@usedSNPsNo, object@startBP, object@endBP, object@sectrSampleSize,
-              object@sectrGeneName, object@sectrIndSNPpvalue, object@sectrMinpvalue,
-              object@executedPerm, object@desc)
-          })
-
-
-
-#' Load the reference panel and filters out low MAF variants
+#' 
 #'
 #' @param refgt data.frame Reference haplotypes with columns of CHROM, POS, REF, ALT, GT, 
 #' followed by the base of each each individual. Needs to use same reference genome as your GWAS and eQTL
@@ -580,7 +530,7 @@ get_null_dist <- function(jlim_vars,sectr.sample.size,nperm,n.cores,r2res=.8,pro
 #' @param min.SNPs.count numeric The minimum number of SNPs needed to run
 #'
 #' @return a jlim object containing the test results
-jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.count) {
+jlim.test.numeric <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.count) {
 
   # unpack variables
   main_tr <- jlim_vars[[1]]
@@ -593,12 +543,6 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
 
   NULLDIST <- null_dist[[1]]
   r2res <- null_dist[[2]]
-
-  results.allgene <- matrix(ncol=13, nrow=0)
-  colnames(results.allgene) <- c("userIdxBP"," actualIdxBP","STAT", "pvalue",
-                                 "usedSNPsNo", "startBP","endBP", "sectrSampleSize",
-                                 "sectrGeneName","sectrIdxSNPAssocPvalue", "sectrMinAssocPvalue",
-                                 "executedPerm" ,"desc")
 
   # copy the matrix, replace rownames, append Z-scores from the p-values
   assoc2 <- sec_tr
@@ -625,18 +569,16 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
       stop("too few common SNPs to run JLIM")
   }
 
-  jlim.res <- SNPselction(assoc1, assoc2, ld1=ld1, ld2=ld2, ld0.maf, r2res = r2res,
+  jlim.res <- SNPselction.numeric(assoc1, assoc2, ld1=ld1, ld2=ld2, ld0.maf, r2res = r2res,
                           sectr.sample.size, min.SNPs.count,
                           indexSNP=indexSNP, NULLDIST)
 
   if (is.null(jlim.res)) {
     return(NA)
   }
-  jlim.res@userIdxBP <- indexSNP
 
-  results.allgene <- rbind (results.allgene, getVec.jlim(jlim.res))
 
-  return(results.allgene)
+  return(jlim.res)
 }
 
 
@@ -656,7 +598,7 @@ jlim.test <- function(jlim_vars, null_dist, sec_tr, sectr.sample.size, min.SNPs.
 #' @param NULLDIST numeric The null distribution of JLIM statistics
 #'
 #' @return a jlim object containing the results of the test
-SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
+SNPselction.numeric <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
                         sectr.sample.size, min.SNPs.count, indexSNP, NULLDIST) {
 
   assoc1.sel <- assoc1$BP[assoc1$P <= 0.1]
@@ -681,19 +623,6 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
   sectrIndSNPpvalue <- assoc2$P[assoc2$BP==indexSNP]
   sectrMinpvalue <- min(assoc2$P)
   sectrSNPWithMinpvalue <- assoc2$BP[ assoc2$P==min(assoc2$P)][1]
-  jlim.res <- new("jlim",
-                  userIdxBP=assoc1.t$BP[best1],
-                  actualIdxBP=assoc1.t$BP[best1],
-                  STAT=NA_real_, pvalue=NA_real_,
-                  usedSNPsNo=nrow(assoc1.t),
-                  startBP= min(assoc1.t$BP),
-                  endBP= max(assoc1.t$BP),
-                  sectrSampleSize=sectr.sample.size,
-                  sectrGeneName="",
-                  sectrIndSNPpvalue=sectrIndSNPpvalue,
-                  sectrMinpvalue=sectrMinpvalue,
-                  sectrSNPWithMinpvalue=sectrSNPWithMinpvalue,
-                  desc="", executedPerm=0)
 
   # check the number of remaining snps in the assoc1
   if(nrow(assoc1.t) < min.SNPs.count ){
@@ -708,11 +637,8 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
 
   permP <- sum(NULLDIST >= lambda.t, na.rm=TRUE)/sum(!is.na(NULLDIST))
 
-  jlim.res@desc <- "executed"
-  jlim.res@STAT=lambda.t
-  jlim.res@pvalue=permP
-  jlim.res@executedPerm=executedPerm
-  return(jlim.res)
+
+  return(permP)
 }
 
 #' The main user-facing function for running JLIM colocalization test per cell
@@ -734,19 +660,20 @@ SNPselction <- function(assoc1, assoc2, ld1, ld2, ld0.maf, r2res,
 jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
                       min.SNPs.count=15, top_trunc=TRUE, n.cores=20) {
   main_tr <- jlim_vars[[1]]
-
+  
   cl <- makeCluster(n.cores)
-  clusterExport(cl, c("calc.stat","ASSERT","jlim.test","PtoZ","SNPselction",
+  clusterExport(cl, c("calc.stat","ASSERT","jlim.test.numeric","PtoZ","SNPselction.numeric",
                       "as.numeric","cbind.data.frame","ACAT","main_tr",
                       "jlim_vars","null_dist","sectr.sample.size",
                       "min.SNPs.count"),
                 envir=environment())
+
   clusterEvalQ(cl, c(library(ACAT)))
 
   per_cell_jlim <- parLapply(cl,snp_res_mat,function(snp_res_un) {
 
     if (is.na(snp_res_un[1])) {
-      return(list(FALSE,1))
+      return(NA_real_)
     }
 
     # select pvalues for all snps for a cell
@@ -757,18 +684,18 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
       snp_res_un[snp_res_un==0] <- min(snp_res_un[snp_res_un!=0])
     }
 
+
     sec_tr <- cbind.data.frame(main_tr$CHR,main_tr$BP,snp_res_un)
     colnames(sec_tr) <- c('CHR','BP','P')
 
-    jlim_res <- jlim.test(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
+    jlim_res <- jlim.test.numeric(jlim_vars, null_dist, sec_tr, sectr.sample.size=sectr.sample.size,
                           min.SNPs.count=min.SNPs.count)
 
     if (is.na(jlim_res[1])) {
       return(NA)
     }
 
-    pval <- as.numeric(jlim_res[1,'pvalue'])
-    return(list(pval))
+    return(list(jlim_res))
   })
   stopCluster(cl)
 
@@ -789,7 +716,7 @@ jlim_main <- function(snp_res_mat, jlim_vars, null_dist, sectr.sample.size,
     per_cell_jlim_un[per_cell_jlim_un>.5] <- runif(sum(per_cell_jlim_un>.5),min=.5,max=1)
   }
   per_cell_jlim_un[per_cell_jlim_un==0] <- 1/length(null_dist[[1]])
-  
+
   global_p <- ACAT(per_cell_jlim_un)
 
   return(list(global_p,per_cell_jlim_un))
